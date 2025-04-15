@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { connectDB } from './config/database';
 import transactionRoutes from './routes/transaction.routes';
+import userRoutes from './routes/user.routes';
 import { errorHandler } from './middlewares/error.middleware';
 
 const app = express();
@@ -13,6 +14,7 @@ app.use(express.json());
 
 // Routes
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/users', userRoutes);
 
 // Error Handler
 app.use(errorHandler);

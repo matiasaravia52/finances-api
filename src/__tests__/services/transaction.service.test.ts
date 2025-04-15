@@ -52,7 +52,8 @@ describe('TransactionService', () => {
       amount: 1000,
       type: TransactionType.INCOME,
       category: 'Salary',
-      description: 'Monthly salary'
+      description: 'Monthly salary',
+      userId: 'test-user-id'
     };
 
     it('should create and return a new transaction', async () => {
@@ -70,10 +71,7 @@ describe('TransactionService', () => {
 
       const result = await TransactionService.createTransaction(mockTransactionData);
 
-      expect(Transaction).toHaveBeenCalledWith({
-        ...mockTransactionData,
-        userId: 'temp-user'
-      });
+      expect(Transaction).toHaveBeenCalledWith(mockTransactionData);
       expect(result).toEqual(mockSavedTransaction);
     });
 

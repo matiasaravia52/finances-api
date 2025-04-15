@@ -4,7 +4,8 @@ import { TransactionService } from '../services/transaction.service';
 export class TransactionController {
   static async getTransactions(req: Request, res: Response) {
     try {
-      const transactions = await TransactionService.getTransactions();
+      const userId = req.body.userId;
+      const transactions = await TransactionService.getTransactionsByUserId(userId);
       res.json({
         success: true,
         data: transactions
@@ -20,7 +21,9 @@ export class TransactionController {
 
   static async createTransaction(req: Request, res: Response) {
     try {
-      const transaction = await TransactionService.createTransaction(req.body);
+      const userId = req.body.userId;
+      const transactionData = { ...req.body, userId };
+      const transaction = await TransactionService.createTransaction(transactionData);
       res.status(201).json({
         success: true,
         data: transaction

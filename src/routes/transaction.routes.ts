@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { TransactionController } from '../controllers/transaction.controller';
 import { body } from 'express-validator';
 import { TransactionType } from '../interfaces/transaction.interface';
+import { authMiddleware } from '../middlewares/auth.middleware';
 
 const router = Router();
 
@@ -22,6 +23,9 @@ const validateTransaction = [
     .isString()
     .withMessage('Description must be a string')
 ];
+
+// Proteger todas las rutas con el middleware de autenticación
+router.use(authMiddleware);
 
 router.get('/', TransactionController.getTransactions);
 router.post('/', validateTransaction, TransactionController.createTransaction);
