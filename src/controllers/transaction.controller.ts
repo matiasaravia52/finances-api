@@ -1,15 +1,23 @@
 import { Request, Response } from 'express';
-import { TransactionService, FilterPeriod } from '../services/transaction.service';
+import { TransactionService, FilterPeriod, TransactionFilters } from '../services/transaction.service';
 
 export class TransactionController {
   static async getTransactions(req: Request, res: Response) {
     try {
       const userId = req.body.userId;
-      const period = req.query.period as FilterPeriod || 'all';
       
-      console.log(`Fetching transactions for user ${userId} with period ${period}`);
+      // Extraer filtros de los query params
+      const filters: TransactionFilters = {
+        period: req.query.period as FilterPeriod || 'all',
+        type: req.query.type as string || undefined,
+        category: req.query.category as string || undefined,
+        page: req.query.page ? parseInt(req.query.page as string, 10) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string, 10) : 10
+      };
       
-      const transactions = await TransactionService.getTransactionsByUserId(userId, period);
+      console.log(`Fetching transactions for user ${userId} with filters:`, filters);
+      
+      const transactions = await TransactionService.getTransactionsByUserId(userId, filters);
       
       res.json({
         success: true,
@@ -20,6 +28,28 @@ export class TransactionController {
       res.status(500).json({
         success: false,
         error: 'Error fetching transactions'
+      });
+    }
+  }
+  
+  static async getTransactionCategories(req: Request, res: Response) {
+    try {
+      const userId = req.body.userId;
+      const type = req.query.type as string || undefined;
+      
+      console.log(`Fetching transaction categories for user ${userId} with type filter: ${type || 'none'}`);
+      
+      const categories = await TransactionService.getTransactionCategories(userId, type);
+      
+      res.json({
+        success: true,
+        data: categories
+      });
+    } catch (error) {
+      console.error('Controller error fetching transaction categories:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Error fetching transaction categories'
       });
     }
   }

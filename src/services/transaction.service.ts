@@ -3,6 +3,22 @@ import { ITransaction, ITransactionCreate, TransactionType } from '../interfaces
 
 export type FilterPeriod = 'all' | 'current-month' | 'last-month' | 'current-year';
 
+export interface TransactionFilters {
+  period?: FilterPeriod;
+  type?: string;
+  category?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface PaginatedTransactions {
+  transactions: ITransaction[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 interface ICreateTransactionData extends ITransactionCreate {
   type: TransactionType;
   userId: string;
@@ -18,17 +34,17 @@ export class TransactionService {
     }
   }
 
-  static async getTransactionsByUserId(userId: string, period: FilterPeriod = 'all'): Promise<ITransaction[]> {
+  static async getTransactionsByUserId(userId: string, filters: TransactionFilters = {}): Promise<PaginatedTransactions> {
     try {
       const query: any = { userId };
       
       // Aplicar filtro por período
-      if (period !== 'all') {
+      if (filters.period && filters.period !== 'all') {
         const now = new Date();
         const currentYear = now.getFullYear();
         const currentMonth = now.getMonth();
         
-        switch (period) {
+        switch (filters.period) {
           case 'current-month': {
             const startOfMonth = new Date(currentYear, currentMonth, 1);
             const endOfMonth = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59, 999);
@@ -54,9 +70,59 @@ export class TransactionService {
         }
       }
       
-      return await Transaction.find(query).sort({ date: -1 });
+      // Aplicar filtro por tipo
+      if (filters.type) {
+        query.type = filters.type;
+      }
+      
+      // Aplicar filtro por categoría
+      if (filters.category) {
+        query.category = filters.category;
+      }
+      
+      console.log('Applying filters:', { userId, filters, query });
+      
+      // Configuración de paginación
+      const page = filters.page && filters.page > 0 ? filters.page : 1;
+      const limit = filters.limit && filters.limit > 0 ? filters.limit : 10;
+      const skip = (page - 1) * limit;
+      
+      // Obtener el total de documentos para calcular el número total de páginas
+      const total = await Transaction.countDocuments(query);
+      const totalPages = Math.ceil(total / limit);
+      
+      // Obtener las transacciones paginadas
+      const transactions = await Transaction.find(query)
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit);
+      
+      return {
+        transactions,
+        total,
+        page,
+        limit,
+        totalPages
+      };
     } catch (error) {
-      console.error(`Error fetching transactions for user ${userId} with period ${period}:`, error);
+      console.error(`Error fetching transactions for user ${userId} with filters:`, filters, error);
+      throw error;
+    }
+  }
+  
+  static async getTransactionCategories(userId: string, type?: string): Promise<string[]> {
+    try {
+      const query: any = { userId };
+      
+      // Si se proporciona un tipo, filtrar por ese tipo
+      if (type) {
+        query.type = type;
+      }
+      
+      const categories = await Transaction.distinct('category', query);
+      return categories;
+    } catch (error) {
+      console.error(`Error fetching transaction categories for user ${userId}:`, error);
       throw error;
     }
   }
