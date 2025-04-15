@@ -28,6 +28,7 @@ const validateTransaction = [
 router.use(authMiddleware);
 
 router.get('/', TransactionController.getTransactions);
+router.get('/summary', TransactionController.getTransactionsSummary);
 router.post('/', validateTransaction, TransactionController.createTransaction);
 router.put('/:id', validateTransaction, TransactionController.updateTransaction);
 router.delete('/:id', TransactionController.deleteTransaction);

@@ -1,11 +1,16 @@
 import { Request, Response } from 'express';
-import { TransactionService } from '../services/transaction.service';
+import { TransactionService, FilterPeriod } from '../services/transaction.service';
 
 export class TransactionController {
   static async getTransactions(req: Request, res: Response) {
     try {
       const userId = req.body.userId;
-      const transactions = await TransactionService.getTransactionsByUserId(userId);
+      const period = req.query.period as FilterPeriod || 'all';
+      
+      console.log(`Fetching transactions for user ${userId} with period ${period}`);
+      
+      const transactions = await TransactionService.getTransactionsByUserId(userId, period);
+      
       res.json({
         success: true,
         data: transactions
@@ -15,6 +20,27 @@ export class TransactionController {
       res.status(500).json({
         success: false,
         error: 'Error fetching transactions'
+      });
+    }
+  }
+  
+  static async getTransactionsSummary(req: Request, res: Response) {
+    try {
+      const userId = req.body.userId;
+      
+      console.log(`Fetching transactions summary for user ${userId}`);
+      
+      const summary = await TransactionService.getTransactionsSummary(userId);
+      
+      res.json({
+        success: true,
+        data: summary
+      });
+    } catch (error) {
+      console.error('Controller error fetching transactions summary:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Error fetching transactions summary'
       });
     }
   }
