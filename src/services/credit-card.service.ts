@@ -358,15 +358,46 @@ export class CreditCardService {
       const currentDate = new Date();
       const currentMonthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
       
-      // Verificar si hay pagos existentes en el mes actual
+      // Verificar si hay gastos (pagados o pendientes) en el mes actual
+      // Necesitamos distinguir entre:
+      // 1. No tener gastos en absoluto (debe considerar el aporte mensual)
+      // 2. Tener gastos pero todos cancelados (no debe considerar el aporte mensual)
+      // 3. Tener gastos pendientes (debe considerar el aporte mensual)
+      
+      // Verificar si hay pagos pendientes en el mes actual
       const hasExistingPaymentsInCurrentMonth = (existingMonthlyPayments[currentMonthKey] || 0) > 0;
       
+      // Verificar si hay gastos en el mes actual (pagados o pendientes)
+      let hasExpensesInCurrentMonth = false;
+      let allExpensesPaidInCurrentMonth = false;
+      
+      // Contar gastos y gastos pagados en el mes actual
+      let currentMonthExpensesCount = 0;
+      let currentMonthPaidExpensesCount = 0;
+      
+      expenses.forEach(expense => {
+        expense.installments.forEach(installment => {
+          const dueDate = new Date(installment.dueDate);
+          const installmentMonthKey = `${dueDate.getFullYear()}-${dueDate.getMonth()}`;
+          
+          if (installmentMonthKey === currentMonthKey) {
+            currentMonthExpensesCount++;
+            if (installment.status === InstallmentStatus.PAID) {
+              currentMonthPaidExpensesCount++;
+            }
+          }
+        });
+      });
+      
+      hasExpensesInCurrentMonth = currentMonthExpensesCount > 0;
+      allExpensesPaidInCurrentMonth = hasExpensesInCurrentMonth && (currentMonthExpensesCount === currentMonthPaidExpensesCount);
+      
       // Inicializar con el saldo acumulado actual para el primer mes
-      // Si es el mes actual y no hay deudas, no agregar el aporte mensual
       const firstMonth = simulationMonths[0];
       const isFirstMonthCurrentMonth = firstMonth === currentMonthKey;
       
-      // Si es el mes actual y no hay deudas, el acumulado ya incluye el aporte
+      // Inicializar el monto disponible para el primer mes
+      // Para el primer mes, siempre empezamos con el monto acumulado actual
       monthlyAvailableFunds[firstMonth] = fund.accumulatedAmount;
       
       // Para cada mes en la simulación
@@ -378,17 +409,37 @@ export class CreditCardService {
         const simulationPayment = simulationMonthlyPayments[monthKey] || 0;
         const totalPayment = existingPayment + simulationPayment;
         
-        // Para el primer mes, si es el mes actual y no hay pagos existentes,
-        // no considerar el aporte mensual ya que ya está incluido en el acumulado
+        // Obtener el monto disponible para este mes
         let disponible = monthlyAvailableFunds[monthKey] || 0;
         
         // Ajustar el disponible para el primer mes si es necesario
         // En entorno de test, siempre agregar el aporte mensual para mantener compatibilidad con los tests
         const isTestEnvironment = process.env.NODE_ENV === 'test';
         
-        if (i === 0 && isFirstMonthCurrentMonth && !hasExistingPaymentsInCurrentMonth && !isTestEnvironment) {
-          // No agregar el aporte mensual, ya está en el acumulado (solo en entorno de producción)
-          console.log('No agregando aporte mensual para el mes actual sin deudas');
+        if (i === 0) {
+          // Para el primer mes de la simulación
+          if (isFirstMonthCurrentMonth && !isTestEnvironment) {
+            // Si el primer mes es el mes actual
+            if (hasExpensesInCurrentMonth && allExpensesPaidInCurrentMonth) {
+              // Si hay gastos pero todos están pagados, no agregar el aporte mensual
+              console.log('No agregando aporte mensual para el mes actual con todos los gastos pagados');
+            } else {
+              // Si no hay gastos en absoluto o hay pagos pendientes, agregar el aporte mensual
+              disponible += fund.monthlyContribution;
+              console.log(hasExistingPaymentsInCurrentMonth 
+                ? 'Agregando aporte mensual para el mes actual con pagos pendientes' 
+                : 'Agregando aporte mensual para el mes actual sin gastos');
+              // Actualizar el valor en el mapa para que se refleje en la proyección
+              monthlyAvailableFunds[monthKey] = disponible;
+            }
+          } else {
+            // Si el primer mes no es el mes actual o estamos en entorno de test
+            // Siempre agregar el aporte mensual
+            disponible += fund.monthlyContribution;
+            console.log('Agregando aporte mensual para el primer mes (no es mes actual o es test)');
+            // Actualizar el valor en el mapa para que se refleje en la proyección
+            monthlyAvailableFunds[monthKey] = disponible;
+          }
         } else if (i > 0) {
           // Para los meses siguientes, asegurarse de que el disponible incluya el aporte mensual
           disponible = monthlyAvailableFunds[monthKey] || 0;
@@ -424,9 +475,8 @@ export class CreditCardService {
         const date = new Date(year, month, 1);
         return date.toLocaleDateString('es-ES', { year: 'numeric', month: 'long' });
       };
-      
-      // Generar la proyección mensual para cada mes en la simulación
-      for (const monthKey of simulationMonths) {
+      for (let i = 0; i < simulationMonths.length; i++) {
+        const monthKey = simulationMonths[i];
         const availableFunds = monthlyAvailableFunds[monthKey] || 0;
         const existingPayment = existingMonthlyPayments[monthKey] || 0;
         const simulationPayment = simulationMonthlyPayments[monthKey] || 0;
@@ -437,9 +487,22 @@ export class CreditCardService {
         const balanceAfterPayments = availableFunds - totalPayment;
         monthlyBalanceAfterPayments[monthKey] = balanceAfterPayments;
         
+        // Calcular el monto inicial para este mes
+        let initialAmount = 0;
+        if (i === 0) {
+          // Para el primer mes, el monto inicial es el acumulado actual
+          initialAmount = fund.accumulatedAmount;
+        } else {
+          // Para los meses siguientes, el monto inicial es el balance del mes anterior
+          const prevMonthKey = simulationMonths[i - 1];
+          initialAmount = monthlyBalanceAfterPayments[prevMonthKey] || 0;
+        }
+        
         monthlyProjections.push({
           month: monthKey,
           monthLabel: formatMonthLabel(monthKey),
+          initialAmount: initialAmount, // Monto inicial para este mes
+          monthlyContribution: fund.monthlyContribution, // Aporte mensual
           accumulatedFunds: availableFunds, // Fondos acumulados disponibles para el mes (antes de pagos)
           totalBefore: existingPayment,
           newPayment: simulationPayment,

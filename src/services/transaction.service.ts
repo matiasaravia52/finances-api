@@ -174,7 +174,24 @@ export class TransactionService {
 
   static async createTransaction(data: ICreateTransactionData): Promise<ITransaction> {
     try {
-      const transaction = new Transaction(data);
+      // Asegurarse de que los montos de los gastos sean negativos
+      const transactionData = { ...data };
+      
+      if (transactionData.type === 'expense') {
+        // Si es un gasto, asegurarse de que el monto sea negativo
+        if (transactionData.amount > 0) {
+          transactionData.amount = -transactionData.amount;
+          console.log(`Converted positive expense amount to negative: ${transactionData.amount}`);
+        }
+      } else if (transactionData.type === 'income') {
+        // Si es un ingreso, asegurarse de que el monto sea positivo
+        if (transactionData.amount < 0) {
+          transactionData.amount = Math.abs(transactionData.amount);
+          console.log(`Converted negative income amount to positive: ${transactionData.amount}`);
+        }
+      }
+      
+      const transaction = new Transaction(transactionData);
       return await transaction.save();
     } catch (error) {
       console.error('Error creating transaction:', error);

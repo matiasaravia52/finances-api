@@ -53,6 +53,8 @@ export interface ICreditCardFundUpdate {
 export interface IMonthlyProjection {
   month: string; // Formato YYYY-MM
   monthLabel: string; // Formato legible (ej: "Abril 2025")
+  initialAmount: number; // Monto inicial para este mes (antes de aporte mensual)
+  monthlyContribution: number; // Aporte mensual
   accumulatedFunds: number; // Fondos acumulados disponibles para el mes (antes de pagos)
   totalBefore: number; // Total de pagos existentes antes de la simulación
   newPayment: number; // Pago de la nueva cuota ("Aire")
