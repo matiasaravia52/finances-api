@@ -296,11 +296,29 @@ export class CreditCardService {
       console.log(`Fecha de inicio de pago: ${simulationStartDate.toISOString().split('T')[0]}`);
       
       // Crear una lista de los meses para la simulación
-      const simulationMonths: string[] = [];
+      const simulationMonths = [];
       for (let i = 0; i < Math.max(12, totalInstallments + 3); i++) {
         const simulationDate = new Date(baseDate);
         simulationDate.setMonth(simulationDate.getMonth() + i);
         simulationMonths.push(`${simulationDate.getFullYear()}-${simulationDate.getMonth()}`);
+      }
+      
+      // Calcular los fondos disponibles mes a mes
+      const monthlyAvailableFunds: Record<string, number> = {};
+      
+      // Inicializar con el saldo acumulado actual
+      monthlyAvailableFunds[`${baseDate.getFullYear()}-${baseDate.getMonth()}`] = fund.accumulatedAmount;
+      
+      // Propagar el efecto a los meses siguientes, añadiendo la contribución mensual
+      for (let i = 1; i < simulationMonths.length; i++) {
+        const currentMonth = simulationMonths[i];
+        const previousMonth = simulationMonths[i - 1];
+        
+        // Obtener el saldo del mes anterior
+        const previousBalance = monthlyAvailableFunds[previousMonth] || 0;
+        
+        // Añadir la contribución mensual
+        monthlyAvailableFunds[currentMonth] = previousBalance + fund.monthlyContribution;
       }
       
       // Crear un mapa para los pagos existentes por mes
@@ -350,58 +368,6 @@ export class CreditCardService {
         totalMonthlyPayments[monthKey] = existingPayment + simulationPayment;
       });
       
-      // Calcular los fondos disponibles mes a mes
-      const monthlyAvailableFunds: Record<string, number> = {};
-      const monthlyBalanceAfterPayments: Record<string, number> = {};
-      
-      // Obtener el mes actual
-      const currentDate = new Date();
-      const currentMonthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
-      
-      // Verificar si hay pagos existentes en el mes actual
-      const hasExistingPaymentsInCurrentMonth = (existingMonthlyPayments[currentMonthKey] || 0) > 0;
-      
-      // Inicializar con el saldo acumulado actual para el primer mes
-      // Si es el mes actual y no hay deudas, no agregar el aporte mensual
-      const firstMonth = simulationMonths[0];
-      const isFirstMonthCurrentMonth = firstMonth === currentMonthKey;
-      
-      // Si es el mes actual y no hay deudas, el acumulado ya incluye el aporte
-      monthlyAvailableFunds[firstMonth] = fund.accumulatedAmount;
-      
-      // Para cada mes en la simulación
-      for (let i = 0; i < simulationMonths.length; i++) {
-        const monthKey = simulationMonths[i];
-        
-        // Calcular pagos existentes y simulados para este mes
-        const existingPayment = existingMonthlyPayments[monthKey] || 0;
-        const simulationPayment = simulationMonthlyPayments[monthKey] || 0;
-        const totalPayment = existingPayment + simulationPayment;
-        
-        // Para el primer mes, si es el mes actual y no hay pagos existentes,
-        // no considerar el aporte mensual ya que ya está incluido en el acumulado
-        let disponible = monthlyAvailableFunds[monthKey] || 0;
-        
-        // Ajustar el disponible para el primer mes si es necesario
-        if (i === 0 && isFirstMonthCurrentMonth && !hasExistingPaymentsInCurrentMonth) {
-          // No agregar el aporte mensual, ya está en el acumulado
-          console.log('No agregando aporte mensual para el mes actual sin deudas');
-        } else if (i > 0) {
-          // Para los meses siguientes, asegurarse de que el disponible incluya el aporte mensual
-          disponible = monthlyAvailableFunds[monthKey] || 0;
-        }
-        
-        // Calcular el balance después de pagos para este mes
-        const balanceAfterPayments = disponible - totalPayment;
-        monthlyBalanceAfterPayments[monthKey] = balanceAfterPayments;
-        
-        // Propagar el balance al siguiente mes si existe
-        if (i < simulationMonths.length - 1) {
-          const nextMonth = simulationMonths[i + 1];
-          monthlyAvailableFunds[nextMonth] = balanceAfterPayments + fund.monthlyContribution;
-        }
-      }
-      
       // Calcular el margen restante por mes
       const monthlyMargins: Record<string, number> = {};
       
@@ -430,19 +396,13 @@ export class CreditCardService {
         const totalPayment = existingPayment + simulationPayment;
         const margin = availableFunds - totalPayment;
         
-        // Calcular el balance después de pagos para este mes
-        const balanceAfterPayments = availableFunds - totalPayment;
-        monthlyBalanceAfterPayments[monthKey] = balanceAfterPayments;
-        
         monthlyProjections.push({
           month: monthKey,
           monthLabel: formatMonthLabel(monthKey),
-          accumulatedFunds: availableFunds, // Fondos acumulados disponibles para el mes (antes de pagos)
           totalBefore: existingPayment,
           newPayment: simulationPayment,
           totalFinal: totalPayment,
           remainingMargin: margin,
-          balanceAfterPayments: balanceAfterPayments, // Nuevo campo: saldo después de pagos
           status: margin >= 0 ? 'Verde' : 'Rojo'
         });
       }
@@ -451,8 +411,8 @@ export class CreditCardService {
       const canPayTotal = monthlyProjections.every(projection => projection.status === 'Verde');
       
       // Determinar si puede pagar el primer mes
-      const simulationFirstMonthKey = `${simulationStartDate.getFullYear()}-${simulationStartDate.getMonth()}`;
-      const firstMonthProjection = monthlyProjections.find(p => p.month === simulationFirstMonthKey);
+      const firstMonthKey = `${simulationStartDate.getFullYear()}-${simulationStartDate.getMonth()}`;
+      const firstMonthProjection = monthlyProjections.find(p => p.month === firstMonthKey);
       const canPayFirstMonth = firstMonthProjection ? firstMonthProjection.status === 'Verde' : false;
       
       // Determinar si puede pagar el gasto
@@ -518,28 +478,32 @@ export class CreditCardService {
       const projectedAvailableFundsAtStart = monthlyAvailableFunds[startMonthKey] || 0;
       const fundsNeededForExisting = existingMonthlyPayments[startMonthKey] || 0;
       const monthlyRequiredFunds = fundsNeededForExisting + installmentAmount;
+      const projectedBalance = projectedAvailableFundsAtStart - monthlyRequiredFunds;
+      const projectedAvailableFunds = monthlyAvailableFunds[simulationMonths[simulationMonths.length - 1]] || 0;
+      const totalRequiredFundsValue = pendingAmount + amount;
+      const totalProjectedBalance = projectedAvailableFunds - totalRequiredFundsValue;
       
-      // Construir y retornar el resultado de la simulación
+      // Estructura mejorada de la respuesta que se devuelve al usuario
       return {
         canAfford,
         canPayTotal,
         availableFunds,
-        projectedAvailableFunds: projectedAvailableFundsAtStart, // Usar el valor calculado
+        projectedAvailableFunds,
         projectedAvailableFundsAtStart,
-        requiredFunds: fundsNeededForExisting + (installmentAmount * totalInstallments),
+        requiredFunds: monthlyRequiredFunds,
         monthlyRequiredFunds,
-        totalRequiredFunds: amount,
-        projectedBalance: projectedAvailableFundsAtStart - monthlyRequiredFunds,
-        totalProjectedBalance: projectedAvailableFundsAtStart - amount,
-        pendingAmount,
+        totalRequiredFunds: totalRequiredFundsValue,
+        projectedBalance,
+        totalProjectedBalance,
         pendingInstallments,
+        pendingAmount,
         installmentAmount,
         suggestedMonthlyContribution,
         suggestedDurationMonths,
         monthlyProjections
       };
     } catch (error) {
-      console.error('Error simulating expense:', error);
+      console.error(`Error simulating expense for user ${userId}:`, error);
       throw error;
     }
   }

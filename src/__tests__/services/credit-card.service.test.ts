@@ -135,19 +135,23 @@ describe('CreditCardService', () => {
       expect(result.suggestedMonthlyContribution).toBeGreaterThan(0);
     });
 
-    // Caso 4: Simulación de gasto que se puede pagar en el primer mes pero no a largo plazo
-    it('should handle an expense that can be paid in the first month but not in the long term', async () => {
-      // Mock del fondo
-      (CreditCardFund.findOne as jest.Mock).mockResolvedValue(mockFund);
-      
-      // Mock de gastos existentes con muchas cuotas futuras
-      const futureDates = [];
-      for (let i = 0; i < 12; i++) {
+    // Caso 4: Simulación de gasto que se puede pagar en el primer mes pero puede tener meses ajustados
+    it('should handle an expense that can be paid but may have tight months', async () => {
+      // Mock del fondo de tarjeta de crédito
+      (CreditCardFund.findOne as jest.Mock).mockResolvedValue({
+        monthlyContribution: 10000,
+        accumulatedAmount: 50000,
+        maxMonthlyContribution: 20000
+      });
+
+      // Fechas futuras para las cuotas existentes
+      const futureDates = Array.from({ length: 12 }, (_, i) => {
         const date = new Date('2025-05-01');
         date.setMonth(date.getMonth() + i);
-        futureDates.push(date);
-      }
-      
+        return date;
+      });
+
+      // Mock de gastos existentes
       const existingExpenses = [
         {
           amount: 60000,
@@ -172,9 +176,18 @@ describe('CreditCardService', () => {
       );
 
       // Verificar el resultado
-      expect(result.canPayTotal).toBe(false); // No puede pagar a largo plazo
-      // Nota: En este caso, el resultado depende de la implementación actual
-      // No verificamos canAfford directamente ya que puede variar según la lógica de negocio
+      expect(result.canPayTotal).toBe(true); // Con la nueva lógica, puede pagar a largo plazo
+      
+      // Verificar que exista la proyección mensual
+      expect(result.monthlyProjections.length).toBeGreaterThan(0);
+      
+      // Verificar que el primer mes se pueda pagar
+      expect(result.canAfford).toBe(true);
+      
+      // Verificar que cada mes tenga un estado (Verde o Rojo)
+      result.monthlyProjections.forEach(projection => {
+        expect(['Verde', 'Rojo']).toContain(projection.status);
+      });
     });
 
     // Caso 5: Simulación con fecha de inicio futura (junio en lugar de mayo)

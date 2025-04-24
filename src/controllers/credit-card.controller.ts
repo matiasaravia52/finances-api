@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { CreditCardService } from '../services/credit-card.service';
 import { InstallmentStatus } from '../interfaces/credit-card.interface';
+import { CreditCardExpense } from '../models/credit-card-expense.model';
 
 export class CreditCardController {
   // Controladores para el fondo de tarjeta de crédito
@@ -8,8 +9,8 @@ export class CreditCardController {
     try {
       const userId = req.body.userId;
       
-      // Actualizar el monto acumulado antes de devolverlo
-      const fund = await CreditCardService.updateAccumulatedAmount(userId);
+      // Obtener el fondo de tarjeta de crédito
+      const fund = await CreditCardService.getFund(userId);
       
       if (!fund) {
         return res.status(404).json({
@@ -35,7 +36,8 @@ export class CreditCardController {
     try {
       const userId = req.body.userId;
       
-      const fund = await CreditCardService.updateAccumulatedAmount(userId);
+      // Obtener el fondo actual
+      const fund = await CreditCardService.getFund(userId);
       
       if (!fund) {
         return res.status(404).json({
@@ -65,7 +67,19 @@ export class CreditCardController {
       // Eliminar userId del objeto para evitar conflictos
       delete fundData.userId;
       
-      const fund = await CreditCardService.createOrUpdateFund(userId, fundData);
+      // Si ya existe un fondo, actualizarlo; si no, crearlo
+      let fund;
+      const existingFund = await CreditCardService.getFund(userId);
+      
+      if (existingFund) {
+        // Actualizar el fondo usando el userId, no el _id
+        fund = await CreditCardService.updateFund(userId, fundData);
+      } else {
+        fund = await CreditCardService.createFund({
+          ...fundData,
+          userId
+        });
+      }
       
       res.json({
         success: true,
@@ -86,7 +100,11 @@ export class CreditCardController {
       const userId = req.body.userId;
       const includeSimulations = req.query.includeSimulations === 'true';
       
-      const expenses = await CreditCardService.getExpensesByUserId(userId, includeSimulations);
+      // Obtener gastos por userId
+      const expenses = await CreditCardExpense.find({
+        userId,
+        ...(includeSimulations ? {} : { isSimulation: { $ne: true } })
+      });
       
       res.json({
         success: true,
@@ -106,7 +124,7 @@ export class CreditCardController {
       const userId = req.body.userId;
       const expenseId = req.params.id;
       
-      const expense = await CreditCardService.getExpenseById(expenseId, userId);
+      const expense = await CreditCardService.getExpenseById(expenseId);
       
       if (!expense) {
         return res.status(404).json({
@@ -153,7 +171,30 @@ export class CreditCardController {
       const userId = req.body.userId;
       const expenseId = req.params.id;
       
-      const expense = await CreditCardService.updateExpenseStatus(expenseId, userId, false);
+      // Obtener el gasto
+      const expense = await CreditCardService.getExpenseById(expenseId);
+      
+      if (!expense) {
+        return res.status(404).json({
+          success: false,
+          error: 'Credit card expense not found'
+        });
+      }
+      
+      // Verificar que el gasto pertenezca al usuario
+      if (expense.userId !== userId) {
+        return res.status(403).json({
+          success: false,
+          error: 'You do not have permission to update this expense'
+        });
+      }
+      
+      // Actualizar el estado de la simulación
+      const updatedExpense = await CreditCardExpense.findByIdAndUpdate(
+        expenseId,
+        { isSimulation: false },
+        { new: true }
+      );
       
       if (!expense) {
         return res.status(404).json({
@@ -188,14 +229,13 @@ export class CreditCardController {
         });
       }
       
-      const expense = await CreditCardService.updateInstallmentStatus(
+      const success = await CreditCardService.updateInstallmentStatus(
         expenseId,
         installmentNumber,
-        userId,
         status
       );
       
-      if (!expense) {
+      if (!success) {
         return res.status(404).json({
           success: false,
           error: 'Credit card expense or installment not found'
@@ -204,7 +244,7 @@ export class CreditCardController {
       
       res.json({
         success: true,
-        data: expense
+        data: success
       });
     } catch (error) {
       console.error('Controller error updating installment status:', error);
@@ -220,7 +260,7 @@ export class CreditCardController {
       const userId = req.body.userId;
       const expenseId = req.params.id;
       
-      const success = await CreditCardService.deleteExpense(expenseId, userId);
+      const success = await CreditCardService.deleteExpense(expenseId);
       
       if (!success) {
         return res.status(404).json({
@@ -258,7 +298,6 @@ export class CreditCardController {
       
       const expense = await CreditCardService.updatePurchaseDate(
         expenseId,
-        userId,
         new Date(purchaseDate)
       );
       
@@ -297,8 +336,7 @@ export class CreditCardController {
       
       // Convertir la fecha de inicio si se proporciona
       const parsedStartDate = startDate ? new Date(startDate) : undefined;
-      
-      const simulationResult = await CreditCardService.simulateExpense(
+      const result = await CreditCardService.simulateExpense(
         userId,
         amount,
         totalInstallments,
@@ -307,7 +345,7 @@ export class CreditCardController {
       
       res.json({
         success: true,
-        data: simulationResult
+        data: result
       });
     } catch (error) {
       console.error('Controller error simulating expense:', error);

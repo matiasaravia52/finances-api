@@ -50,6 +50,18 @@ export interface ICreditCardFundUpdate {
   accumulatedAmount?: number;
 }
 
+export interface IMonthlyProjection {
+  month: string; // Formato YYYY-MM
+  monthLabel: string; // Formato legible (ej: "Abril 2025")
+  accumulatedFunds: number; // Fondos acumulados disponibles para el mes (antes de pagos)
+  totalBefore: number; // Total de pagos existentes antes de la simulación
+  newPayment: number; // Pago de la nueva cuota ("Aire")
+  totalFinal: number; // Total de pagos incluyendo la simulación
+  remainingMargin: number; // Margen restante (fondos disponibles - total final)
+  balanceAfterPayments: number; // Saldo después de pagar todos los gastos del mes
+  status: 'Verde' | 'Rojo'; // Estado: Verde si puede pagar, Rojo si no puede
+}
+
 export interface ISimulationResult {
   canAfford: boolean;
   canPayTotal: boolean; // Si puede pagar el total a largo plazo
@@ -66,4 +78,5 @@ export interface ISimulationResult {
   installmentAmount: number; // Monto de cada cuota de la simulación
   suggestedMonthlyContribution?: number;
   suggestedDurationMonths?: number;
+  monthlyProjections: IMonthlyProjection[]; // Proyección mensual detallada
 }
