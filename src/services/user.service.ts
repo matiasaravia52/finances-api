@@ -69,12 +69,12 @@ export class UserService {
     const payload = { userId: user._id.toString(), email: user.email };
     // Usar el tipo correcto para expiresIn
     const options: SignOptions = { expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] };
-    return jwt.sign(payload, Buffer.from(JWT_SECRET), options);
+    return jwt.sign(payload, JWT_SECRET, options);
   }
 
   static verifyToken(token: string): { userId: string; email: string } {
     try {
-      return jwt.verify(token, Buffer.from(JWT_SECRET)) as { userId: string; email: string };
+      return jwt.verify(token, JWT_SECRET) as { userId: string; email: string };
     } catch (error) {
       throw new Error('Invalid token');
     }
