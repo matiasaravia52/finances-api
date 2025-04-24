@@ -151,6 +151,15 @@ export class CreditCardController {
       const userId = req.body.userId;
       const expenseData = { ...req.body, userId };
       
+      // Verificar si existe un fondo de tarjeta de crédito
+      const fund = await CreditCardService.getFund(userId);
+      if (!fund) {
+        return res.status(400).json({
+          success: false,
+          error: 'Credit card fund not configured. You must configure a fund before creating expenses.'
+        });
+      }
+      
       const expense = await CreditCardService.createExpense(expenseData);
       
       res.status(201).json({
@@ -159,6 +168,15 @@ export class CreditCardController {
       });
     } catch (error) {
       console.error('Controller error creating credit card expense:', error);
+      
+      // Manejar el error específico de fondo no encontrado
+      if (error instanceof Error && error.message === 'Credit card fund not found for this user') {
+        return res.status(400).json({
+          success: false,
+          error: 'Credit card fund not configured. You must configure a fund before creating expenses.'
+        });
+      }
+      
       res.status(500).json({
         success: false,
         error: 'Error creating credit card expense'
@@ -334,6 +352,15 @@ export class CreditCardController {
         });
       }
       
+      // Verificar si existe un fondo de tarjeta de crédito
+      const fund = await CreditCardService.getFund(userId);
+      if (!fund) {
+        return res.status(400).json({
+          success: false,
+          error: 'Credit card fund not configured. You must configure a fund before simulating expenses.'
+        });
+      }
+      
       // Convertir la fecha de inicio si se proporciona
       const parsedStartDate = startDate ? new Date(startDate) : undefined;
       const result = await CreditCardService.simulateExpense(
@@ -349,6 +376,15 @@ export class CreditCardController {
       });
     } catch (error) {
       console.error('Controller error simulating expense:', error);
+      
+      // Manejar el error específico de fondo no encontrado
+      if (error instanceof Error && error.message === 'Credit card fund not found for this user') {
+        return res.status(400).json({
+          success: false,
+          error: 'Credit card fund not configured. You must configure a fund before simulating expenses.'
+        });
+      }
+      
       res.status(500).json({
         success: false,
         error: 'Error simulating expense'
