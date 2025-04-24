@@ -9,6 +9,11 @@ const creditCardFundSchema = new Schema({
     required: true,
     min: 0
   },
+  maxMonthlyContribution: {
+    type: Number,
+    default: 0, // Se establecerá en el servicio
+    min: 0
+  },
   accumulatedAmount: {
     type: Number,
     default: 0,

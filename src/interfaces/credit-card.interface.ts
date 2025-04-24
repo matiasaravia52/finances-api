@@ -31,6 +31,7 @@ export interface ICreditCardExpenseCreate {
 
 export interface ICreditCardFund {
   monthlyContribution: number;
+  maxMonthlyContribution: number;
   accumulatedAmount: number;
   userId: string;
   lastUpdateDate: Date;
@@ -38,21 +39,27 @@ export interface ICreditCardFund {
 
 export interface ICreditCardFundCreate {
   monthlyContribution: number;
+  maxMonthlyContribution?: number;
   accumulatedAmount?: number;
   userId: string;
 }
 
 export interface ICreditCardFundUpdate {
   monthlyContribution?: number;
+  maxMonthlyContribution?: number;
   accumulatedAmount?: number;
 }
 
 export interface ISimulationResult {
   canAfford: boolean;
-  availableFunds: number;
+  availableFunds: number; // Fondos disponibles actuales (acumulado + contribución mensual)
+  projectedAvailableFunds: number; // Fondos disponibles proyectados (considerando contribuciones futuras)
   requiredFunds: number;
-  projectedBalance: number;
+  totalRequiredFunds: number; // Fondo total requerido para toda la duración de las cuotas
+  projectedBalance: number; // Balance proyectado mensual
+  totalProjectedBalance: number; // Balance proyectado total
   pendingInstallments: number;
   pendingAmount: number;
   suggestedMonthlyContribution?: number;
+  suggestedDurationMonths?: number;
 }

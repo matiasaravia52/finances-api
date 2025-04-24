@@ -36,6 +36,13 @@ export class CreditCardService {
           existingFund.monthlyContribution = data.monthlyContribution;
         }
         
+        if ('maxMonthlyContribution' in data && data.maxMonthlyContribution !== undefined) {
+          existingFund.maxMonthlyContribution = data.maxMonthlyContribution;
+        } else if ('monthlyContribution' in data && data.monthlyContribution !== undefined) {
+          // Si se actualiza la contribución mensual pero no la máxima, actualizamos la máxima por defecto
+          existingFund.maxMonthlyContribution = Math.max(existingFund.maxMonthlyContribution, data.monthlyContribution * 1.5);
+        }
+        
         if ('accumulatedAmount' in data && data.accumulatedAmount !== undefined) {
           existingFund.accumulatedAmount = data.accumulatedAmount;
         }
@@ -43,8 +50,13 @@ export class CreditCardService {
         return await existingFund.save();
       } else {
         // Crear un nuevo fondo
+        const monthlyContribution = 'monthlyContribution' in data && data.monthlyContribution !== undefined ? data.monthlyContribution : 0;
+        
         const newFundData: ICreditCardFundCreate = {
-          monthlyContribution: 'monthlyContribution' in data && data.monthlyContribution !== undefined ? data.monthlyContribution : 0,
+          monthlyContribution,
+          maxMonthlyContribution: 'maxMonthlyContribution' in data && data.maxMonthlyContribution !== undefined 
+            ? data.maxMonthlyContribution 
+            : monthlyContribution * 1.5, // Por defecto, 50% más que la contribución mensual
           accumulatedAmount: 'accumulatedAmount' in data && data.accumulatedAmount !== undefined ? data.accumulatedAmount : 0,
           userId
         };
@@ -234,53 +246,241 @@ export class CreditCardService {
         isSimulation: { $ne: true } 
       });
       
-      // Calcular el monto total de las cuotas pendientes
+      // Calcular el monto por cuota del nuevo gasto simulado
+      const installmentAmount = amount / totalInstallments;
+      
+      // Calcular el total de cuotas pendientes existentes
       let pendingAmount = 0;
       let pendingInstallments = 0;
       
+      // Mapa para agrupar pagos por mes
+      const monthlyPayments: { [key: string]: number } = {};
+      
+      // Fecha actual para calcular los meses
+      const currentDate = new Date();
+      
+      // Agregar las cuotas pendientes existentes al mapa mensual
       expenses.forEach(expense => {
         expense.installments.forEach(installment => {
           if (installment.status === InstallmentStatus.PENDING) {
+            // Contar para estadísticas
             pendingAmount += installment.amount;
             pendingInstallments++;
+            
+            // Agrupar por mes
+            const dueDate = new Date(installment.dueDate);
+            const monthKey = `${dueDate.getFullYear()}-${dueDate.getMonth()}`;
+            
+            if (!monthlyPayments[monthKey]) {
+              monthlyPayments[monthKey] = 0;
+            }
+            
+            monthlyPayments[monthKey] += installment.amount;
           }
         });
       });
       
-      // Calcular el monto por cuota del nuevo gasto
-      const installmentAmount = amount / totalInstallments;
+      // Agregar las cuotas simuladas al mapa mensual
+      for (let i = 0; i < totalInstallments; i++) {
+        const simulatedMonth = new Date(currentDate);
+        simulatedMonth.setMonth(currentDate.getMonth() + i);
+        
+        const monthKey = `${simulatedMonth.getFullYear()}-${simulatedMonth.getMonth()}`;
+        
+        if (!monthlyPayments[monthKey]) {
+          monthlyPayments[monthKey] = 0;
+        }
+        
+        monthlyPayments[monthKey] += installmentAmount;
+      }
       
-      // Calcular el monto total necesario para cubrir todas las cuotas pendientes más las nuevas
-      const requiredFunds = pendingAmount + (installmentAmount * totalInstallments);
+      console.log('Pagos mensuales (incluyendo simulación):', monthlyPayments);
       
-      // Calcular el monto disponible (acumulado + contribuciones futuras para el período de las cuotas)
-      const availableFunds = fund.accumulatedAmount + (fund.monthlyContribution * totalInstallments);
+      // Encontrar el mes con mayor carga financiera
+      let maxMonthPayment = 0;
+      let maxMonthKey = '';
+      
+      Object.entries(monthlyPayments).forEach(([key, value]) => {
+        if (value > maxMonthPayment) {
+          maxMonthPayment = value;
+          maxMonthKey = key;
+        }
+      });
+      
+      console.log(`Mes con mayor carga: ${maxMonthKey}, Monto: ${maxMonthPayment}`);
+      
+      // El fondo requerido es el monto del mes con mayor carga
+      const requiredFunds = maxMonthPayment;
+      
+      // Calcular el monto disponible actual (acumulado + contribución mensual)
+      const availableFunds = fund.accumulatedAmount + fund.monthlyContribution;
+      
+      // Calcular los fondos disponibles SIN la nueva simulación
+      // Encontrar el mes con mayor carga SIN incluir la simulación
+      const monthlyPaymentsWithoutSimulation: { [key: string]: number } = {};
+      
+      // Copiar solo las cuotas existentes
+      expenses.forEach(expense => {
+        expense.installments.forEach(installment => {
+          if (installment.status === InstallmentStatus.PENDING) {
+            const dueDate = new Date(installment.dueDate);
+            const monthKey = `${dueDate.getFullYear()}-${dueDate.getMonth()}`;
+            
+            if (!monthlyPaymentsWithoutSimulation[monthKey]) {
+              monthlyPaymentsWithoutSimulation[monthKey] = 0;
+            }
+            
+            monthlyPaymentsWithoutSimulation[monthKey] += installment.amount;
+          }
+        });
+      });
+      
+      // Encontrar el mes con mayor carga sin la simulación
+      let maxMonthPaymentWithoutSimulation = 0;
+      
+      Object.values(monthlyPaymentsWithoutSimulation).forEach(value => {
+        if (value > maxMonthPaymentWithoutSimulation) {
+          maxMonthPaymentWithoutSimulation = value;
+        }
+      });
+      
+      // Calcular cuánto de los fondos disponibles se necesita para cubrir las cuotas existentes
+      const fundsNeededForExisting = maxMonthPaymentWithoutSimulation;
+      
+      // Fondos realmente disponibles para la simulación
+      const fundsAvailableForSimulation = availableFunds - fundsNeededForExisting;
+      
+      // Calcular cuánto se necesita solo para la simulación
+      const fundsNeededForSimulation = installmentAmount;
+      
+      // Preparar los valores correctos para devolver en la respuesta
+      // El fondo requerido mensual debe incluir tanto las cuotas existentes como la simulación
+      const monthlyRequiredFunds = fundsNeededForExisting + fundsNeededForSimulation;
+      
+      // Calcular el fondo total requerido para toda la duración de las cuotas
+      // Esto incluye todas las cuotas pendientes existentes más todas las cuotas de la simulación
+      const totalRequiredFundsValue = pendingAmount + amount;
+      
+      // Calcular los fondos disponibles proyectados (considerando contribuciones futuras)
+      // Estimamos las contribuciones mensuales durante la duración de las cuotas
+      // Usamos el máximo entre el número total de cuotas y las cuotas pendientes existentes
+      const totalMonths = Math.max(totalInstallments, pendingInstallments > 0 ? pendingInstallments : 0);
+      const projectedAvailableFunds = fund.accumulatedAmount + (fund.monthlyContribution * totalMonths);
+      
+      console.log(`Fondos requeridos totales: ${requiredFunds}`);
+      console.log(`Fondos necesarios para cuotas existentes: ${fundsNeededForExisting}`);
+      console.log(`Fondos disponibles totales: ${availableFunds}`);
+      console.log(`Fondos disponibles para simulación: ${fundsAvailableForSimulation}`);
+      console.log(`Fondos necesarios para simulación: ${fundsNeededForSimulation}`);
       
       // Determinar si se puede realizar el gasto
-      const canAfford = availableFunds >= requiredFunds;
+      // Verificamos si los fondos actuales son suficientes para el primer mes
+      const canAffordMonthly = availableFunds >= monthlyRequiredFunds;
       
-      // Calcular el balance proyectado después de todas las cuotas
-      const projectedBalance = availableFunds - requiredFunds;
+      // Y verificamos si los fondos proyectados son suficientes para el total
+      const canAffordTotal = projectedAvailableFunds >= totalRequiredFundsValue;
       
-      // Calcular el aporte mensual necesario si no se puede realizar el gasto
+      // Solo podemos permitirnos el gasto si podemos pagar el primer mes
+      // Para el caso de la heladera, no importa si tenemos fondos proyectados suficientes
+      // si no podemos pagar el primer mes
+      const canAfford = canAffordMonthly;
+      
+      console.log(`canAffordMonthly: ${canAffordMonthly}, canAffordTotal: ${canAffordTotal}, canAfford: ${canAfford}`);
+      
+      // Balance proyectado (lo que quedaría después de pagar la simulación)
+      const projectedBalance = fundsAvailableForSimulation - fundsNeededForSimulation;
+      
+      // Calcular sugerencia de contribución mensual si no se puede realizar el gasto
       let suggestedMonthlyContribution = 0;
+      let suggestedDurationMonths = 0;
+      
       if (!canAfford) {
-        // Calcular cuánto más se necesita por mes para cubrir el gasto
-        const deficit = requiredFunds - availableFunds;
-        // Sugerir un nuevo aporte mensual que cubra el déficit más un 10% de margen
-        suggestedMonthlyContribution = fund.monthlyContribution + (deficit / totalInstallments) * 1.1;
-        // Redondear a un número entero para facilidad de uso
-        suggestedMonthlyContribution = Math.ceil(suggestedMonthlyContribution);
+        // Calcular el déficit total que hay que cubrir
+        const deficit = fundsNeededForSimulation - fundsAvailableForSimulation;
+        
+        // Usar el aporte mensual máximo definido por el usuario
+        // Si no está definido, calculamos uno razonable
+        let maxReasonableContribution;
+        
+        if (fund.maxMonthlyContribution && fund.maxMonthlyContribution > fund.monthlyContribution) {
+          // Usar el valor definido por el usuario
+          maxReasonableContribution = fund.maxMonthlyContribution;
+          console.log(`Usando aporte máximo definido por el usuario: ${maxReasonableContribution}`);
+        } else {
+          // Calcular un valor razonable basado en la cuota
+          const installmentAmountReference = amount / totalInstallments;
+          maxReasonableContribution = Math.max(
+            fund.monthlyContribution * 1.5, // 50% más que el aporte actual
+            installmentAmountReference * 1.5 // 50% más que el monto de la cuota
+          );
+          console.log(`Calculando aporte máximo razonable: ${maxReasonableContribution}`);
+        }
+        
+        // Limitar el aporte sugerido al máximo razonable
+        suggestedMonthlyContribution = Math.min(
+          Math.ceil(fund.monthlyContribution + deficit), // Aporte que cubriría todo el déficit en un mes
+          maxReasonableContribution // Pero limitado a un monto razonable
+        );
+        
+        // Calcular cuánto extra se aportaría por mes comparado con la contribución actual
+        const extraContributionPerMonth = suggestedMonthlyContribution - fund.monthlyContribution;
+        
+        if (extraContributionPerMonth > 0) {
+          // Calcular cuántos meses se necesitan para cubrir el déficit con el aporte extra
+          suggestedDurationMonths = Math.ceil(deficit / extraContributionPerMonth);
+          
+          // Asegurarnos de que la duración sea al menos 1 mes
+          suggestedDurationMonths = Math.max(1, suggestedDurationMonths);
+          
+          // Agregar un margen de seguridad (10% más de tiempo)
+          suggestedDurationMonths = Math.ceil(suggestedDurationMonths * 1.1);
+          
+          console.log(`Déficit: ${deficit}, Aporte extra: ${extraContributionPerMonth}, Duración: ${suggestedDurationMonths} meses`);
+        }
       }
+      
+      // Los valores de monthlyRequiredFunds y totalRequiredFundsValue ya se calcularon arriba
+      
+      // El balance proyectado mensual debe ser lo que quedaría después de pagar el primer mes
+      // Si no se puede realizar el gasto, el balance debe ser negativo
+      let monthlyProjectedBalance;
+      
+      if (canAfford) {
+        // Si se puede realizar el gasto, el balance es positivo
+        monthlyProjectedBalance = availableFunds - monthlyRequiredFunds;
+      } else {
+        // Si no se puede realizar el gasto, el balance es negativo
+        // Calculamos cuánto falta para poder realizar el gasto
+        // Aseguramos que sea negativo usando el valor absoluto y multiplicando por -1
+        monthlyProjectedBalance = -Math.abs(fundsNeededForSimulation - fundsAvailableForSimulation);
+      }
+      
+      // El balance proyectado total debe ser lo que quedaría después de pagar todas las cuotas
+      // Calculamos cuánto quedaría después de pagar todas las cuotas existentes y simuladas
+      const totalProjectedBalance = availableFunds - totalRequiredFundsValue;
+      
+      console.log('Valores que se devuelven:');
+      console.log(`canAfford: ${canAfford}`);
+      console.log(`availableFunds: ${availableFunds}`);
+      console.log(`projectedAvailableFunds: ${projectedAvailableFunds}`);
+      console.log(`requiredFunds (mensual): ${monthlyRequiredFunds}`);
+      console.log(`totalRequiredFunds (total): ${totalRequiredFundsValue}`);
+      console.log(`projectedBalance (mensual): ${monthlyProjectedBalance}`);
+      console.log(`totalProjectedBalance (total): ${totalProjectedBalance}`);
+      console.log(`suggestedDurationMonths: ${suggestedDurationMonths}`);
       
       return {
         canAfford,
         availableFunds,
-        requiredFunds,
-        projectedBalance,
+        projectedAvailableFunds,
+        requiredFunds: monthlyRequiredFunds,
+        totalRequiredFunds: totalRequiredFundsValue,
+        projectedBalance: monthlyProjectedBalance,
+        totalProjectedBalance,
         pendingInstallments,
         pendingAmount,
-        suggestedMonthlyContribution
+        suggestedMonthlyContribution,
+        suggestedDurationMonths
       };
     } catch (error) {
       console.error(`Error simulating expense for user ${userId}:`, error);
