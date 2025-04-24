@@ -286,7 +286,7 @@ export class CreditCardController {
   static async simulateExpense(req: Request, res: Response) {
     try {
       const userId = req.body.userId;
-      const { amount, totalInstallments } = req.body;
+      const { amount, totalInstallments, startDate } = req.body;
       
       if (!amount || !totalInstallments) {
         return res.status(400).json({
@@ -295,10 +295,14 @@ export class CreditCardController {
         });
       }
       
+      // Convertir la fecha de inicio si se proporciona
+      const parsedStartDate = startDate ? new Date(startDate) : undefined;
+      
       const simulationResult = await CreditCardService.simulateExpense(
         userId,
         amount,
-        totalInstallments
+        totalInstallments,
+        parsedStartDate
       );
       
       res.json({

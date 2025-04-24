@@ -18,7 +18,10 @@ describe('TransactionController', () => {
     };
 
     mockRequest = {
-      body: {}
+      body: {
+        userId: 'test-user'
+      },
+      query: {}
     };
 
     mockResponse = {
@@ -41,7 +44,7 @@ describe('TransactionController', () => {
 
     it('should return transactions successfully', async () => {
       // Mock the service method
-      (TransactionService.getTransactions as jest.Mock).mockResolvedValue(mockTransactions);
+      (TransactionService.getTransactionsByUserId as jest.Mock).mockResolvedValue(mockTransactions);
 
       await TransactionController.getTransactions(
         mockRequest as Request,
@@ -56,7 +59,7 @@ describe('TransactionController', () => {
 
     it('should handle errors when fetching transactions fails', async () => {
       const error = new Error('Database error');
-      (TransactionService.getTransactions as jest.Mock).mockRejectedValue(error);
+      (TransactionService.getTransactionsByUserId as jest.Mock).mockRejectedValue(error);
 
       await TransactionController.getTransactions(
         mockRequest as Request,

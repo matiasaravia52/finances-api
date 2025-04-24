@@ -228,11 +228,8 @@ export class CreditCardService {
   }
 
   // Método para simular un gasto
-  static async simulateExpense(userId: string, amount: number, totalInstallments: number): Promise<ISimulationResult> {
+  static async simulateExpense(userId: string, amount: number, totalInstallments: number, startDate?: Date): Promise<ISimulationResult> {
     try {
-      // Actualizar el monto acumulado primero
-      await this.updateAccumulatedAmount(userId);
-      
       // Obtener el fondo del usuario
       const fund = await CreditCardFund.findOne({ userId });
       
@@ -256,8 +253,12 @@ export class CreditCardService {
       // Mapa para agrupar pagos por mes
       const monthlyPayments: { [key: string]: number } = {};
       
-      // Fecha actual para calcular los meses
-      const currentDate = new Date();
+      // Fecha para calcular los meses de las cuotas
+      const baseDate = new Date();
+      // Usar la fecha de inicio proporcionada o la fecha actual
+      const simulationStartDate = startDate ? new Date(startDate) : new Date(baseDate);
+      
+      console.log(`Fecha de inicio de pago: ${simulationStartDate.toISOString().split('T')[0]}`);
       
       // Agregar las cuotas pendientes existentes al mapa mensual
       expenses.forEach(expense => {
@@ -282,8 +283,8 @@ export class CreditCardService {
       
       // Agregar las cuotas simuladas al mapa mensual
       for (let i = 0; i < totalInstallments; i++) {
-        const simulatedMonth = new Date(currentDate);
-        simulatedMonth.setMonth(currentDate.getMonth() + i);
+        const simulatedMonth = new Date(simulationStartDate);
+        simulatedMonth.setMonth(simulationStartDate.getMonth() + i);
         
         const monthKey = `${simulatedMonth.getFullYear()}-${simulatedMonth.getMonth()}`;
         
@@ -345,7 +346,11 @@ export class CreditCardService {
       });
       
       // Calcular cuánto de los fondos disponibles se necesita para cubrir las cuotas existentes
-      const fundsNeededForExisting = maxMonthPaymentWithoutSimulation;
+      // en el mes específico en que comenzará el pago de la simulación
+      const startMonthKey = `${simulationStartDate.getFullYear()}-${simulationStartDate.getMonth()}`;
+      const fundsNeededForExisting = monthlyPaymentsWithoutSimulation[startMonthKey] || 0;
+      
+      console.log(`Pagos existentes para el mes de inicio (${startMonthKey}): $${fundsNeededForExisting.toFixed(2)}`);
       
       // Fondos realmente disponibles para la simulación
       const fundsAvailableForSimulation = availableFunds - fundsNeededForExisting;
@@ -354,49 +359,270 @@ export class CreditCardService {
       const fundsNeededForSimulation = installmentAmount;
       
       // Preparar los valores correctos para devolver en la respuesta
-      // El fondo requerido mensual debe incluir tanto las cuotas existentes como la simulación
+      // El fondo requerido mensual debe incluir tanto las cuotas existentes del mes de inicio como la simulación
       const monthlyRequiredFunds = fundsNeededForExisting + fundsNeededForSimulation;
       
       // Calcular el fondo total requerido para toda la duración de las cuotas
       // Esto incluye todas las cuotas pendientes existentes más todas las cuotas de la simulación
       const totalRequiredFundsValue = pendingAmount + amount;
       
-      // Calcular los fondos disponibles proyectados (considerando contribuciones futuras)
-      // Estimamos las contribuciones mensuales durante la duración de las cuotas
-      // Usamos el máximo entre el número total de cuotas y las cuotas pendientes existentes
+      // Calcular los meses de diferencia entre la fecha actual y la fecha de inicio de pago
+      // Usamos las variables ya definidas (baseDate y simulationStartDate)
+      
+      // Calcular la diferencia en meses
+      const monthsDifference = (
+        (simulationStartDate.getFullYear() - baseDate.getFullYear()) * 12 + 
+        (simulationStartDate.getMonth() - baseDate.getMonth())
+      );
+      
+      console.log(`Diferencia en meses hasta el inicio de pago: ${monthsDifference}`);
+      
+      // Calcular el flujo de fondos mes a mes hasta la fecha de inicio del pago y más allá
+      // Esto nos permitirá saber cuánto dinero realmente tendremos disponible en cada mes
+      
+      // Comenzamos con el monto acumulado actual (que podría ser 0 si no hay fondos acumulados)
+      let accumulatedFunds = fund.accumulatedAmount;
+      
+      // Obtener el mes y año actual
+      const currentMonth = baseDate.getMonth();
+      const currentYear = baseDate.getFullYear();
+      const currentMonthKey = `${currentYear}-${currentMonth}`;
+      
+      // Crear un mapa para rastrear el saldo disponible mes a mes
+      const monthlyBalances: { [key: string]: number } = {};
+      
+      // Inicializar el saldo del mes actual con el monto acumulado
+      // Nota: En el mes actual NO agregamos la contribución mensual porque asumimos que
+      // ya está incluida en el monto acumulado o que se hará a partir del próximo mes
+      monthlyBalances[currentMonthKey] = accumulatedFunds;
+      
+      console.log(`\nPROYECCIÓN DE FLUJO DE FONDOS MES A MES:`);
+      console.log(`Mes actual (${currentMonthKey}): Saldo inicial: $${accumulatedFunds.toFixed(2)}`);
+      
+      // Proyectar el flujo de fondos mes a mes, comenzando desde el próximo mes
+      for (let i = 1; i <= monthsDifference + totalInstallments; i++) {
+        // Calcular el año y mes para este paso
+        const projectionMonth = new Date(baseDate);
+        projectionMonth.setMonth(projectionMonth.getMonth() + i);
+        const monthKey = `${projectionMonth.getFullYear()}-${projectionMonth.getMonth()}`;
+        
+        // Obtener el saldo del mes anterior
+        const previousMonth = new Date(projectionMonth);
+        previousMonth.setMonth(previousMonth.getMonth() - 1);
+        const previousMonthKey = `${previousMonth.getFullYear()}-${previousMonth.getMonth()}`;
+        const previousBalance = monthlyBalances[previousMonthKey] || 0;
+        
+        // Comenzamos con el saldo del mes anterior
+        let monthBalance = previousBalance;
+        
+        // Agregar la contribución mensual para este mes
+        monthBalance += fund.monthlyContribution;
+        
+        // Restar los pagos de este mes
+        const paymentsThisMonth = monthlyPaymentsWithoutSimulation[monthKey] || 0;
+        monthBalance -= paymentsThisMonth;
+        
+        // Guardar el saldo de este mes
+        monthlyBalances[monthKey] = monthBalance;
+        
+        console.log(`Mes ${monthKey}: Saldo anterior: $${previousBalance.toFixed(2)}, Contribución: +$${fund.monthlyContribution.toFixed(2)}, Pagos: -$${paymentsThisMonth.toFixed(2)}, Saldo final: $${monthBalance.toFixed(2)}`);
+        
+        // Si este es el mes de inicio, destacarlo
+        if (i === monthsDifference) {
+          console.log(`^ Este es el mes de inicio del pago (${simulationStartDate.toLocaleDateString('es-ES', { year: 'numeric', month: 'long' })})`);
+        }
+      }
+      
+      // El saldo proyectado para la fecha de inicio es el saldo del mes correspondiente
+      // Usamos el startMonthKey que ya definimos anteriormente
+      const projectedAvailableFundsAtStart = monthlyBalances[startMonthKey] || 0;
+      
+      // Calcular los fondos disponibles totales proyectados para toda la duración
       const totalMonths = Math.max(totalInstallments, pendingInstallments > 0 ? pendingInstallments : 0);
-      const projectedAvailableFunds = fund.accumulatedAmount + (fund.monthlyContribution * totalMonths);
+      const projectedAvailableFunds = monthlyBalances[Object.keys(monthlyBalances)[Object.keys(monthlyBalances).length - 1]] || 0;
       
-      console.log(`Fondos requeridos totales: ${requiredFunds}`);
-      console.log(`Fondos necesarios para cuotas existentes: ${fundsNeededForExisting}`);
-      console.log(`Fondos disponibles totales: ${availableFunds}`);
-      console.log(`Fondos disponibles para simulación: ${fundsAvailableForSimulation}`);
-      console.log(`Fondos necesarios para simulación: ${fundsNeededForSimulation}`);
+      // Información de diagnóstico más clara
+      console.log('=== ANÁLISIS DE VIABILIDAD DEL GASTO ===');
+      console.log(`Monto total del gasto: $${amount} en ${totalInstallments} cuotas de $${installmentAmount.toFixed(2)}`);
+      console.log(`Fecha de inicio de pago: ${simulationStartDate.toLocaleDateString('es-ES', { year: 'numeric', month: 'long' })}`);
       
-      // Determinar si se puede realizar el gasto
-      // Verificamos si los fondos actuales son suficientes para el primer mes
-      const canAffordMonthly = availableFunds >= monthlyRequiredFunds;
+      console.log(`\nSITUACIÓN ACTUAL:`);
+      console.log(`- Fondos disponibles actuales: $${availableFunds.toFixed(2)} (acumulado: $${fund.accumulatedAmount.toFixed(2)} + mensual: $${fund.monthlyContribution.toFixed(2)})`);
       
-      // Y verificamos si los fondos proyectados son suficientes para el total
-      const canAffordTotal = projectedAvailableFunds >= totalRequiredFundsValue;
+      console.log(`\nSITUACIÓN PROYECTADA PARA EL INICIO DE PAGO:`);
+      console.log(`- Fondos proyectados para el inicio: $${projectedAvailableFundsAtStart.toFixed(2)}`);
+      console.log(`- Pagos mensuales existentes: $${fundsNeededForExisting.toFixed(2)}`);
+      console.log(`- Fondos disponibles para nuevo gasto: $${(projectedAvailableFundsAtStart - fundsNeededForExisting).toFixed(2)}`);
       
-      // Solo podemos permitirnos el gasto si podemos pagar el primer mes
-      // Para el caso de la heladera, no importa si tenemos fondos proyectados suficientes
-      // si no podemos pagar el primer mes
-      const canAfford = canAffordMonthly;
+      console.log(`\nREQUERIMIENTOS DEL GASTO:`);
+      console.log(`- Pago mensual del nuevo gasto: $${fundsNeededForSimulation.toFixed(2)}`);
+      console.log(`- Pago mensual total (existente + nuevo): $${monthlyRequiredFunds.toFixed(2)}`);
       
-      console.log(`canAffordMonthly: ${canAffordMonthly}, canAffordTotal: ${canAffordTotal}, canAfford: ${canAfford}`);
+      // Simular el flujo de fondos con la nueva cuota incluida
+      // Esto nos permitirá determinar si realmente podemos pagar el gasto a lo largo del tiempo
+      console.log(`\nSIMULACIÓN CON EL NUEVO GASTO INCLUIDO:`);
+      
+      // Obtener el saldo disponible en el mes de inicio
+      const availableBalanceAtStart = monthlyBalances[startMonthKey] || 0;
+      
+      // Verificar si podemos pagar el gasto en el mes de inicio
+      // Comparamos el saldo disponible con el monto de la cuota
+      const canPayFirstMonth = availableBalanceAtStart >= fundsNeededForSimulation;
+      
+      console.log(`Mes de inicio (${startMonthKey}): Saldo disponible: $${availableBalanceAtStart.toFixed(2)}, Cuota nueva: $${fundsNeededForSimulation.toFixed(2)}, ¿Suficiente? ${canPayFirstMonth ? 'SÍ' : 'NO'}`);
+      
+      // Simular los pagos futuros para ver si podemos mantener el gasto
+      let canMaintainPayments = canPayFirstMonth; // Solo continuamos si podemos pagar el primer mes
+      
+      if (canPayFirstMonth) {
+        // Hacer una copia de los saldos mensuales para no afectar los originales
+        const simulatedBalances = { ...monthlyBalances };
+        
+        // Crear una lista de los meses para la simulación, comenzando con el mes de inicio
+        const simulationMonths = [];
+        for (let i = 0; i < totalInstallments; i++) {
+          const simulationDate = new Date(simulationStartDate);
+          simulationDate.setMonth(simulationDate.getMonth() + i);
+          simulationMonths.push(`${simulationDate.getFullYear()}-${simulationDate.getMonth()}`);
+        }
+        
+        // Simular cada mes
+        for (const monthKey of simulationMonths) {
+          // Obtener el saldo actual para este mes
+          let currentBalance = simulatedBalances[monthKey] || 0;
+          
+          // Restar el pago de la nueva cuota
+          currentBalance -= fundsNeededForSimulation;
+          
+          // Actualizar el saldo simulado
+          simulatedBalances[monthKey] = currentBalance;
+          
+          console.log(`Mes ${monthKey}: Saldo original: $${monthlyBalances[monthKey]?.toFixed(2) || '0.00'}, Después de la cuota: $${currentBalance.toFixed(2)}, ¿Suficiente? ${currentBalance >= 0 ? 'SÍ' : 'NO'}`);
+          
+          // Si en algún mes no tenemos suficientes fondos, no podemos mantener los pagos
+          if (currentBalance < 0) {
+            canMaintainPayments = false;
+            console.log(`^ No hay suficientes fondos para mantener los pagos en este mes`);
+            break;
+          }
+          
+          // Propagar el efecto a los meses siguientes
+          // Encontrar el siguiente mes en la simulación
+          const nextMonthIndex = simulationMonths.indexOf(monthKey) + 1;
+          if (nextMonthIndex < simulationMonths.length) {
+            const nextMonthKey = simulationMonths[nextMonthIndex];
+            if (simulatedBalances[nextMonthKey] !== undefined) {
+              // Ajustar el saldo del siguiente mes basado en el cambio en este mes
+              const originalBalance = monthlyBalances[monthKey] || 0;
+              const balanceChange = currentBalance - originalBalance;
+              simulatedBalances[nextMonthKey] = (simulatedBalances[nextMonthKey] || 0) + balanceChange;
+            }
+          }
+        }
+      } else {
+        console.log(`No se puede pagar la primera cuota, no se simularán los meses siguientes.`);
+      }
+      
+      // Verificamos si los fondos proyectados son suficientes para el total
+      const canPayTotal = projectedAvailableFunds >= totalRequiredFundsValue;
+      
+      // Podemos permitirnos el gasto si podemos pagar el primer mes
+      // Para gastos de una sola cuota, esto es suficiente
+      // Para gastos de múltiples cuotas, también debemos poder mantener los pagos
+      const canAfford = totalInstallments === 1 ? canPayFirstMonth : (canPayFirstMonth && canMaintainPayments);
+      
+      console.log(`\nRESULTADO:`);
+      console.log(`- ¿Puede pagar el primer mes cuando llegue la fecha? ${canPayFirstMonth ? 'SÍ' : 'NO'} (${projectedAvailableFundsAtStart.toFixed(2)} vs ${monthlyRequiredFunds.toFixed(2)})`);
+      console.log(`- ¿Puede pagar el total a largo plazo? ${canPayTotal ? 'SÍ' : 'NO'} (${projectedAvailableFunds.toFixed(2)} vs ${totalRequiredFundsValue.toFixed(2)})`);
+      console.log(`- CONCLUSIÓN: ${canAfford ? 'PUEDE' : 'NO PUEDE'} REALIZAR EL GASTO`);
       
       // Balance proyectado (lo que quedaría después de pagar la simulación)
-      const projectedBalance = fundsAvailableForSimulation - fundsNeededForSimulation;
+      // Usamos los fondos proyectados para la fecha de inicio en lugar de los fondos actuales
+      const projectedBalance = (projectedAvailableFundsAtStart - fundsNeededForExisting) - fundsNeededForSimulation;
       
       // Calcular sugerencia de contribución mensual si no se puede realizar el gasto
       let suggestedMonthlyContribution = 0;
       let suggestedDurationMonths = 0;
       
       if (!canAfford) {
-        // Calcular el déficit total que hay que cubrir
-        const deficit = fundsNeededForSimulation - fundsAvailableForSimulation;
+        // Calcular el déficit real basado en la simulación de flujo de fondos
+        // Encontrar el primer mes con saldo negativo o el déficit del primer mes
+        let deficit = 0;
+        
+        if (!canPayFirstMonth) {
+          // Si no podemos pagar el primer mes, calculamos el déficit real teniendo en cuenta los aportes mensuales
+          // El déficit es la diferencia entre lo que necesitamos y lo que tenemos disponible
+          const rawDeficit = fundsNeededForSimulation - availableBalanceAtStart;
+          
+          // Calculamos cuántos meses de aporte se necesitarían para cubrir este déficit
+          // Esto nos da una idea más precisa del esfuerzo necesario para hacer viable el gasto
+          const monthsNeeded = Math.ceil(rawDeficit / fund.monthlyContribution);
+          
+          // El déficit total a mostrar es el monto que necesitaríamos acumular
+          deficit = rawDeficit;
+          
+          console.log(`Déficit en el primer mes: $${rawDeficit.toFixed(2)}`);
+          console.log(`Meses de aporte necesarios para cubrir el déficit: ${monthsNeeded}`);
+        } else if (!canMaintainPayments) {
+          // Si no podemos mantener los pagos, calculamos el déficit acumulado a lo largo del tiempo
+          // Recreamos la simulación para encontrar el déficit total
+          let totalDeficit = 0;
+          let worstNegativeBalance = 0;
+          
+          // Hacer una copia de los saldos mensuales para la simulación
+          const deficitSimulatedBalances = { ...monthlyBalances };
+          
+          // Crear una lista de los meses para la simulación
+          const simulationMonthsForDeficit = [];
+          for (let i = 0; i < totalInstallments; i++) {
+            const simulationDate = new Date(simulationStartDate);
+            simulationDate.setMonth(simulationDate.getMonth() + i);
+            simulationMonthsForDeficit.push(`${simulationDate.getFullYear()}-${simulationDate.getMonth()}`);
+          }
+          
+          // Simular cada mes para calcular el déficit acumulado
+          for (const monthKey of simulationMonthsForDeficit) {
+            // Obtener el saldo actual para este mes
+            let currentBalance = deficitSimulatedBalances[monthKey] || 0;
+            
+            // Restar el pago de la nueva cuota
+            currentBalance -= fundsNeededForSimulation;
+            
+            // Si el saldo es negativo, sumarlo al déficit total
+            if (currentBalance < 0) {
+              totalDeficit += Math.abs(currentBalance);
+            }
+            
+            // Actualizar el saldo simulado
+            deficitSimulatedBalances[monthKey] = currentBalance;
+            
+            // Registrar el peor saldo negativo para referencia
+            if (currentBalance < worstNegativeBalance) {
+              worstNegativeBalance = currentBalance;
+            }
+            
+            // Propagar el efecto a los meses siguientes
+            const nextMonthIndex = simulationMonthsForDeficit.indexOf(monthKey) + 1;
+            if (nextMonthIndex < simulationMonthsForDeficit.length) {
+              const nextMonthKey = simulationMonthsForDeficit[nextMonthIndex];
+              if (deficitSimulatedBalances[nextMonthKey] !== undefined) {
+                const originalBalance = monthlyBalances[monthKey] || 0;
+                const balanceChange = currentBalance - originalBalance;
+                deficitSimulatedBalances[nextMonthKey] = (deficitSimulatedBalances[nextMonthKey] || 0) + balanceChange;
+              }
+            }
+          }
+          
+          // El déficit a mostrar es el déficit total acumulado
+          deficit = totalDeficit;
+          
+          // Calculamos cuántos meses de aporte se necesitarían para cubrir este déficit
+          const monthsNeeded = Math.ceil(deficit / fund.monthlyContribution);
+          
+          console.log(`Déficit acumulado en meses futuros: $${deficit.toFixed(2)}`);
+          console.log(`Peor saldo negativo: $${Math.abs(worstNegativeBalance).toFixed(2)}`);
+          console.log(`Meses de aporte necesarios para cubrir el déficit: ${monthsNeeded}`);
+        }
         
         // Usar el aporte mensual máximo definido por el usuario
         // Si no está definido, calculamos uno razonable
@@ -405,7 +631,8 @@ export class CreditCardService {
         if (fund.maxMonthlyContribution && fund.maxMonthlyContribution > fund.monthlyContribution) {
           // Usar el valor definido por el usuario
           maxReasonableContribution = fund.maxMonthlyContribution;
-          console.log(`Usando aporte máximo definido por el usuario: ${maxReasonableContribution}`);
+          console.log(`\nSUGERENCIA DE MEJORA:`);
+          console.log(`- Usando aporte máximo definido por el usuario: $${maxReasonableContribution.toFixed(2)}`);
         } else {
           // Calcular un valor razonable basado en la cuota
           const installmentAmountReference = amount / totalInstallments;
@@ -413,12 +640,26 @@ export class CreditCardService {
             fund.monthlyContribution * 1.5, // 50% más que el aporte actual
             installmentAmountReference * 1.5 // 50% más que el monto de la cuota
           );
-          console.log(`Calculando aporte máximo razonable: ${maxReasonableContribution}`);
+          console.log(`\nSUGERENCIA DE MEJORA:`);
+          console.log(`- Aporte máximo razonable calculado: $${maxReasonableContribution.toFixed(2)}`);
         }
         
-        // Limitar el aporte sugerido al máximo razonable
+        // Calcular una contribución mensual razonable basada en el déficit y la duración
+        // Primero, estimamos una duración razonable (entre 1 y 6 meses)
+        const reasonableDuration = Math.min(6, Math.max(1, Math.ceil(deficit / (fund.monthlyContribution * 0.3))));
+        
+        // Luego, calculamos cuánto extra necesitamos por mes para cubrir el déficit en ese tiempo
+        // Usamos Math.ceil para asegurar que cubrimos todo el déficit, pero redondeamos a la centena más cercana
+        // para que sea un número más amigable para el usuario
+        const extraNeededPerMonth = Math.ceil(deficit / reasonableDuration / 100) * 100;
+        
+        console.log(`- Déficit exacto: $${deficit.toFixed(2)}`);
+        console.log(`- Duración estimada: ${reasonableDuration} meses`);
+        console.log(`- Extra necesario por mes: $${extraNeededPerMonth.toFixed(2)}`);
+        
+        // La contribución sugerida es la actual más el extra necesario
         suggestedMonthlyContribution = Math.min(
-          Math.ceil(fund.monthlyContribution + deficit), // Aporte que cubriría todo el déficit en un mes
+          fund.monthlyContribution + extraNeededPerMonth,
           maxReasonableContribution // Pero limitado a un monto razonable
         );
         
@@ -432,14 +673,12 @@ export class CreditCardService {
           // Asegurarnos de que la duración sea al menos 1 mes
           suggestedDurationMonths = Math.max(1, suggestedDurationMonths);
           
-          // Agregar un margen de seguridad (10% más de tiempo)
-          suggestedDurationMonths = Math.ceil(suggestedDurationMonths * 1.1);
-          
-          console.log(`Déficit: ${deficit}, Aporte extra: ${extraContributionPerMonth}, Duración: ${suggestedDurationMonths} meses`);
+          console.log(`- Déficit a cubrir: $${deficit.toFixed(2)}`);
+          console.log(`- Aporte mensual sugerido: $${suggestedMonthlyContribution.toFixed(2)} (un aumento de $${extraContributionPerMonth.toFixed(2)})`);
+          console.log(`- Duración recomendada: ${suggestedDurationMonths} meses`);
+          console.log(`- Después de este período, podrá realizar este gasto`);
         }
       }
-      
-      // Los valores de monthlyRequiredFunds y totalRequiredFundsValue ya se calcularon arriba
       
       // El balance proyectado mensual debe ser lo que quedaría después de pagar el primer mes
       // Si no se puede realizar el gasto, el balance debe ser negativo
@@ -447,38 +686,45 @@ export class CreditCardService {
       
       if (canAfford) {
         // Si se puede realizar el gasto, el balance es positivo
-        monthlyProjectedBalance = availableFunds - monthlyRequiredFunds;
+        // Usamos los fondos proyectados para la fecha de inicio
+        monthlyProjectedBalance = projectedAvailableFundsAtStart - monthlyRequiredFunds;
       } else {
         // Si no se puede realizar el gasto, el balance es negativo
         // Calculamos cuánto falta para poder realizar el gasto
-        // Aseguramos que sea negativo usando el valor absoluto y multiplicando por -1
-        monthlyProjectedBalance = -Math.abs(fundsNeededForSimulation - fundsAvailableForSimulation);
+        monthlyProjectedBalance = -Math.abs(fundsNeededForSimulation - (projectedAvailableFundsAtStart - fundsNeededForExisting));
       }
       
       // El balance proyectado total debe ser lo que quedaría después de pagar todas las cuotas
-      // Calculamos cuánto quedaría después de pagar todas las cuotas existentes y simuladas
-      const totalProjectedBalance = availableFunds - totalRequiredFundsValue;
+      // Usamos los fondos proyectados totales que ya tienen en cuenta el mes de inicio
+      const totalProjectedBalance = projectedAvailableFunds - totalRequiredFundsValue;
       
-      console.log('Valores que se devuelven:');
-      console.log(`canAfford: ${canAfford}`);
-      console.log(`availableFunds: ${availableFunds}`);
-      console.log(`projectedAvailableFunds: ${projectedAvailableFunds}`);
-      console.log(`requiredFunds (mensual): ${monthlyRequiredFunds}`);
-      console.log(`totalRequiredFunds (total): ${totalRequiredFundsValue}`);
-      console.log(`projectedBalance (mensual): ${monthlyProjectedBalance}`);
-      console.log(`totalProjectedBalance (total): ${totalProjectedBalance}`);
-      console.log(`suggestedDurationMonths: ${suggestedDurationMonths}`);
+      console.log('\nRESUMEN FINAL:');
+      console.log(`- Puede realizar el gasto: ${canAfford ? 'SÍ' : 'NO'}`);
+      console.log(`- Fondos disponibles actuales: $${availableFunds.toFixed(2)}`);
+      console.log(`- Fondos proyectados para el inicio de pago: $${projectedAvailableFundsAtStart.toFixed(2)}`);
+      console.log(`- Fondos requeridos mensuales: $${monthlyRequiredFunds.toFixed(2)}`);
+      console.log(`- Balance mensual proyectado: $${monthlyProjectedBalance.toFixed(2)}`);
+      console.log(`- Meses hasta el inicio de pago: ${monthsDifference}`);
       
+      if (!canAfford && suggestedMonthlyContribution > 0) {
+        console.log(`- Contribución mensual sugerida: $${suggestedMonthlyContribution.toFixed(2)} durante ${suggestedDurationMonths} meses`);
+      }
+      
+      // Estructura mejorada de la respuesta que se devuelve al usuario
       return {
         canAfford,
+        canPayTotal,
         availableFunds,
         projectedAvailableFunds,
+        projectedAvailableFundsAtStart,
         requiredFunds: monthlyRequiredFunds,
+        monthlyRequiredFunds,
         totalRequiredFunds: totalRequiredFundsValue,
         projectedBalance: monthlyProjectedBalance,
         totalProjectedBalance,
         pendingInstallments,
         pendingAmount,
+        installmentAmount,
         suggestedMonthlyContribution,
         suggestedDurationMonths
       };
