@@ -72,9 +72,8 @@ export class CreditCardController {
       const existingFund = await CreditCardService.getFund(userId);
       
       if (existingFund) {
-        // Obtener el ID del documento de MongoDB
-        const fundId = (existingFund as any)._id;
-        fund = await CreditCardService.updateFund(fundId, fundData);
+        // Actualizar el fondo usando el userId, no el _id
+        fund = await CreditCardService.updateFund(userId, fundData);
       } else {
         fund = await CreditCardService.createFund({
           ...fundData,
