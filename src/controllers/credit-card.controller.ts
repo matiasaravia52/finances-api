@@ -1,16 +1,25 @@
 import { Request, Response } from 'express';
-import { CreditCardService } from '../services/credit-card.service';
 import { InstallmentStatus } from '../interfaces/credit-card.interface';
 import { CreditCardExpense } from '../models/credit-card-expense.model';
+import { getCreditCardService } from '../config/dependencies';
 
+/**
+ * Controlador para operaciones relacionadas con tarjetas de crédito
+ * Implementa el patrón Singleton para mantener compatibilidad con código existente
+ */
 export class CreditCardController {
+  // Obtener la instancia del servicio desde el contenedor de dependencias
+  private static getService() {
+    return getCreditCardService();
+  }
+  
   // Controladores para el fondo de tarjeta de crédito
   static async getFund(req: Request, res: Response) {
     try {
       const userId = req.body.userId;
       
       // Obtener el fondo de tarjeta de crédito
-      const fund = await CreditCardService.getFund(userId);
+      const fund = await CreditCardController.getService().getFund(userId);
       
       if (!fund) {
         return res.status(404).json({
@@ -37,7 +46,7 @@ export class CreditCardController {
       const userId = req.body.userId;
       
       // Obtener el fondo actual
-      const fund = await CreditCardService.getFund(userId);
+      const fund = await CreditCardController.getService().getFund(userId);
       
       if (!fund) {
         return res.status(404).json({
@@ -69,13 +78,14 @@ export class CreditCardController {
       
       // Si ya existe un fondo, actualizarlo; si no, crearlo
       let fund;
-      const existingFund = await CreditCardService.getFund(userId);
+      const service = CreditCardController.getService();
+      const existingFund = await service.getFund(userId);
       
       if (existingFund) {
         // Actualizar el fondo usando el userId, no el _id
-        fund = await CreditCardService.updateFund(userId, fundData);
+        fund = await service.updateFund(userId, fundData);
       } else {
-        fund = await CreditCardService.createFund({
+        fund = await service.createFund({
           ...fundData,
           userId
         });
@@ -124,7 +134,7 @@ export class CreditCardController {
       const userId = req.body.userId;
       const expenseId = req.params.id;
       
-      const expense = await CreditCardService.getExpenseById(expenseId);
+      const expense = await CreditCardController.getService().getExpenseById(expenseId);
       
       if (!expense) {
         return res.status(404).json({
@@ -152,7 +162,8 @@ export class CreditCardController {
       const expenseData = { ...req.body, userId };
       
       // Verificar si existe un fondo de tarjeta de crédito
-      const fund = await CreditCardService.getFund(userId);
+      const service = CreditCardController.getService();
+      const fund = await service.getFund(userId);
       if (!fund) {
         return res.status(400).json({
           success: false,
@@ -160,7 +171,7 @@ export class CreditCardController {
         });
       }
       
-      const expense = await CreditCardService.createExpense(expenseData);
+      const expense = await service.createExpense(expenseData);
       
       res.status(201).json({
         success: true,
@@ -190,7 +201,7 @@ export class CreditCardController {
       const expenseId = req.params.id;
       
       // Obtener el gasto
-      const expense = await CreditCardService.getExpenseById(expenseId);
+      const expense = await CreditCardController.getService().getExpenseById(expenseId);
       
       if (!expense) {
         return res.status(404).json({
@@ -208,13 +219,9 @@ export class CreditCardController {
       }
       
       // Actualizar el estado de la simulación
-      const updatedExpense = await CreditCardExpense.findByIdAndUpdate(
-        expenseId,
-        { isSimulation: false },
-        { new: true }
-      );
+      const updatedExpense = await CreditCardController.getService().executeExpense(expenseId);
       
-      if (!expense) {
+      if (!updatedExpense) {
         return res.status(404).json({
           success: false,
           error: 'Credit card expense not found'
@@ -223,7 +230,7 @@ export class CreditCardController {
       
       res.json({
         success: true,
-        data: expense
+        data: updatedExpense
       });
     } catch (error) {
       console.error('Controller error executing credit card expense:', error);
@@ -247,13 +254,13 @@ export class CreditCardController {
         });
       }
       
-      const success = await CreditCardService.updateInstallmentStatus(
+      const updatedExpense = await CreditCardController.getService().updateInstallmentStatus(
         expenseId,
         installmentNumber,
         status
       );
       
-      if (!success) {
+      if (!updatedExpense) {
         return res.status(404).json({
           success: false,
           error: 'Credit card expense or installment not found'
@@ -262,7 +269,7 @@ export class CreditCardController {
       
       res.json({
         success: true,
-        data: success
+        data: updatedExpense
       });
     } catch (error) {
       console.error('Controller error updating installment status:', error);
@@ -278,9 +285,9 @@ export class CreditCardController {
       const userId = req.body.userId;
       const expenseId = req.params.id;
       
-      const success = await CreditCardService.deleteExpense(expenseId);
+      const result = await CreditCardController.getService().deleteExpense(expenseId);
       
-      if (!success) {
+      if (!result) {
         return res.status(404).json({
           success: false,
           error: 'Credit card expense not found'
@@ -314,12 +321,12 @@ export class CreditCardController {
         });
       }
       
-      const expense = await CreditCardService.updatePurchaseDate(
+      const updatedExpense = await CreditCardController.getService().updatePurchaseDate(
         expenseId,
         new Date(purchaseDate)
       );
       
-      if (!expense) {
+      if (!updatedExpense) {
         return res.status(404).json({
           success: false,
           error: 'Credit card expense not found'
@@ -328,7 +335,7 @@ export class CreditCardController {
       
       res.json({
         success: true,
-        data: expense
+        data: updatedExpense
       });
     } catch (error) {
       console.error('Controller error updating purchase date:', error);
@@ -353,7 +360,8 @@ export class CreditCardController {
       }
       
       // Verificar si existe un fondo de tarjeta de crédito
-      const fund = await CreditCardService.getFund(userId);
+      const service = CreditCardController.getService();
+      const fund = await service.getFund(userId);
       if (!fund) {
         return res.status(400).json({
           success: false,
@@ -361,18 +369,17 @@ export class CreditCardController {
         });
       }
       
-      // Convertir la fecha de inicio si se proporciona
-      const parsedStartDate = startDate ? new Date(startDate) : undefined;
-      const result = await CreditCardService.simulateExpense(
+      // Simular el gasto
+      const simulation = await service.simulateExpense(
         userId,
         amount,
         totalInstallments,
-        parsedStartDate
+        startDate ? new Date(startDate) : undefined
       );
       
       res.json({
         success: true,
-        data: result
+        data: simulation
       });
     } catch (error) {
       console.error('Controller error simulating expense:', error);

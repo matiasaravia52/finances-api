@@ -1,8 +1,7 @@
-import { CreditCardFund } from '../models/credit-card-fund.model';
 import { CreditCardExpense } from '../models/credit-card-expense.model';
 import { 
   ICreditCardFund, 
-  ICreditCardFundCreate, 
+  ICreditCardFundCreate,
   ICreditCardFundUpdate,
   ICreditCardExpense,
   ICreditCardExpenseCreate,
@@ -11,81 +10,42 @@ import {
   ISimulationResult,
   IMonthlyProjection
 } from '../interfaces/credit-card.interface';
+import { ICreditCardFundRepository } from '../interfaces/repositories/credit-card-fund.repository.interface';
+import { IExpenseCalculator } from '../interfaces/services/expense-calculator.interface';
 
+/**
+ * Servicio principal para la gestión de tarjetas de crédito
+ * Implementa el patrón de inyección de dependencias para seguir el principio SOLID
+ * de Inversión de Dependencias (DIP)
+ */
 export class CreditCardService {
-  // Método para obtener el fondo de tarjeta de crédito de un usuario
-  static async getFund(userId: string): Promise<ICreditCardFund | null> {
-    try {
-      return await CreditCardFund.findOne({ userId });
-    } catch (error) {
-      console.error(`Error fetching credit card fund for user ${userId}:`, error);
-      throw error;
-    }
+  constructor(
+    private fundRepository: ICreditCardFundRepository,
+    private expenseCalculator: IExpenseCalculator
+  ) {}
+
+  /**
+   * Obtiene el fondo de tarjeta de crédito de un usuario
+   */
+  async getFund(userId: string): Promise<ICreditCardFund | null> {
+    return await this.fundRepository.getFund(userId);
   }
 
-  // Método para crear un fondo de tarjeta de crédito
-  static async createFund(fundData: ICreditCardFundCreate): Promise<ICreditCardFund> {
-    try {
-      // Verificar si ya existe un fondo para este usuario
-      const existingFund = await CreditCardFund.findOne({ userId: fundData.userId });
-      
-      if (existingFund) {
-        throw new Error('Credit card fund already exists for this user');
-      }
-      
-      // Si no se proporciona un valor para maxMonthlyContribution, usar el doble de la contribución mensual
-      if (!fundData.maxMonthlyContribution) {
-        fundData.maxMonthlyContribution = fundData.monthlyContribution * 2;
-      }
-      
-      // Si no se proporciona un valor para accumulatedAmount, usar 0
-      if (fundData.accumulatedAmount === undefined) {
-        fundData.accumulatedAmount = 0;
-      }
-      
-      const fund = new CreditCardFund(fundData);
-      return await fund.save();
-    } catch (error) {
-      console.error('Error creating credit card fund:', error);
-      throw error;
-    }
+  /**
+   * Crea un nuevo fondo de tarjeta de crédito
+   */
+  async createFund(fundData: ICreditCardFundCreate): Promise<ICreditCardFund> {
+    return await this.fundRepository.createFund(fundData);
   }
 
-  // Método para actualizar un fondo de tarjeta de crédito
-  static async updateFund(userId: string, updateData: ICreditCardFundUpdate): Promise<ICreditCardFund | null> {
-    try {
-      // Verificar si existe el fondo
-      const fund = await CreditCardFund.findOne({ userId });
-      
-      if (!fund) {
-        throw new Error('Credit card fund not found for this user');
-      }
-      
-      // Actualizar los campos proporcionados
-      if (updateData.monthlyContribution !== undefined) {
-        fund.monthlyContribution = updateData.monthlyContribution;
-      }
-      
-      if (updateData.maxMonthlyContribution !== undefined) {
-        fund.maxMonthlyContribution = updateData.maxMonthlyContribution;
-      }
-      
-      if (updateData.accumulatedAmount !== undefined) {
-        fund.accumulatedAmount = updateData.accumulatedAmount;
-      }
-      
-      // Actualizar la fecha de última actualización
-      fund.lastUpdateDate = new Date();
-      
-      return await fund.save();
-    } catch (error) {
-      console.error(`Error updating credit card fund for user ${userId}:`, error);
-      throw error;
-    }
+  /**
+   * Actualiza un fondo de tarjeta de crédito existente
+   */
+  async updateFund(userId: string, updateData: ICreditCardFundUpdate): Promise<ICreditCardFund | null> {
+    return await this.fundRepository.updateFund(userId, updateData);
   }
 
-  // Método para obtener todos los gastos de tarjeta de crédito de un usuario
-  static async getExpenses(userId: string): Promise<ICreditCardExpense[]> {
+  async getExpenses(userId: string): Promise<ICreditCardExpense[]> {
     try {
       return await CreditCardExpense.find({ userId }).sort({ purchaseDate: -1 });
     } catch (error) {
@@ -94,8 +54,7 @@ export class CreditCardService {
     }
   }
 
-  // Método para obtener un gasto específico por ID
-  static async getExpenseById(id: string): Promise<ICreditCardExpense | null> {
+  async getExpenseById(id: string): Promise<ICreditCardExpense | null> {
     try {
       return await CreditCardExpense.findById(id);
     } catch (error) {
@@ -104,11 +63,15 @@ export class CreditCardService {
     }
   }
 
-  // Método para crear un nuevo gasto de tarjeta de crédito
-  static async createExpense(expenseData: ICreditCardExpenseCreate): Promise<ICreditCardExpense> {
+  /**
+   * Crea un nuevo gasto de tarjeta de crédito
+   * Si es una simulación, simplemente crea el registro
+   * Si no es simulación, verifica que haya fondos suficientes
+   */
+  async createExpense(expenseData: ICreditCardExpenseCreate): Promise<ICreditCardExpense> {
     try {
       // Verificar si existe el fondo
-      const fund = await CreditCardFund.findOne({ userId: expenseData.userId });
+      const fund = await this.fundRepository.getFund(expenseData.userId);
       
       if (!fund) {
         throw new Error('Credit card fund not found for this user');
@@ -119,7 +82,7 @@ export class CreditCardService {
         const expense = new CreditCardExpense(expenseData);
         
         // Generar las cuotas
-        expense.installments = CreditCardService.generateInstallments(
+        expense.installments = this.expenseCalculator.calculateInstallments(
           expenseData.amount,
           expenseData.totalInstallments,
           expenseData.purchaseDate || new Date()
@@ -130,11 +93,9 @@ export class CreditCardService {
       
       // Si no es una simulación, verificar si hay fondos suficientes
       // Simular el gasto primero
-      const simulationResult = await CreditCardService.simulateExpense(
-        expenseData.userId,
-        expenseData.amount,
-        expenseData.totalInstallments,
-        expenseData.purchaseDate
+      const simulationResult = await this.expenseCalculator.simulateExpense(
+        fund,
+        expenseData
       );
       
       if (!simulationResult.canAfford) {
@@ -145,7 +106,7 @@ export class CreditCardService {
       const expense = new CreditCardExpense(expenseData);
       
       // Generar las cuotas
-      expense.installments = CreditCardService.generateInstallments(
+      expense.installments = this.expenseCalculator.calculateInstallments(
         expenseData.amount,
         expenseData.totalInstallments,
         expenseData.purchaseDate || new Date()
@@ -158,8 +119,7 @@ export class CreditCardService {
     }
   }
 
-  // Método para ejecutar un gasto simulado
-  static async executeExpense(id: string): Promise<ICreditCardExpense> {
+  async executeExpense(id: string): Promise<ICreditCardExpense> {
     try {
       // Obtener el gasto
       const expense = await CreditCardExpense.findById(id);
@@ -183,8 +143,7 @@ export class CreditCardService {
     }
   }
 
-  // Método para eliminar un gasto
-  static async deleteExpense(id: string): Promise<boolean> {
+  async deleteExpense(id: string): Promise<boolean> {
     try {
       const result = await CreditCardExpense.deleteOne({ _id: id });
       return result.deletedCount === 1;
@@ -194,8 +153,11 @@ export class CreditCardService {
     }
   }
 
-  // Método para actualizar el estado de una cuota
-  static async updateInstallmentStatus(
+  /**
+   * Actualiza el estado de una cuota (pendiente/pagada)
+   * Si se marca como pagada, actualiza el fondo acumulado
+   */
+  async updateInstallmentStatus(
     id: string,
     installmentNumber: number,
     status: InstallmentStatus
@@ -221,13 +183,14 @@ export class CreditCardService {
       // Si estamos marcando como pagada, actualizar el fondo acumulado
       if (status === InstallmentStatus.PAID) {
         // Obtener el fondo
-        const fund = await CreditCardFund.findOne({ userId: expense.userId });
+        const fund = await this.fundRepository.getFund(expense.userId);
         
         if (fund) {
           // Si el fondo existe, actualizar el monto acumulado
           // Restamos el monto de la cuota porque ya se pagó
-          fund.accumulatedAmount = Math.max(0, fund.accumulatedAmount - installment.amount);
-          await fund.save();
+          await this.fundRepository.updateFund(expense.userId, {
+            accumulatedAmount: Math.max(0, fund.accumulatedAmount - installment.amount)
+          });
         }
       }
       
@@ -238,8 +201,7 @@ export class CreditCardService {
     }
   }
 
-  // Método para actualizar la fecha de compra de un gasto
-  static async updatePurchaseDate(id: string, purchaseDate: Date): Promise<ICreditCardExpense> {
+  async updatePurchaseDate(id: string, purchaseDate: Date): Promise<ICreditCardExpense> {
     try {
       // Obtener el gasto
       const expense = await CreditCardExpense.findById(id);
@@ -249,7 +211,7 @@ export class CreditCardService {
       }
       
       // Regenerar las cuotas con la nueva fecha
-      const installments = CreditCardService.generateInstallments(
+      const installments = this.expenseCalculator.calculateInstallments(
         expense.amount,
         expense.totalInstallments,
         purchaseDate
@@ -265,24 +227,51 @@ export class CreditCardService {
     }
   }
 
-  // Método para simular un gasto
-  static async simulateExpense(userId: string, amount: number, totalInstallments: number, startDate?: Date): Promise<ISimulationResult> {
+  /**
+   * Simula un gasto para determinar si el usuario puede pagarlo
+   * Este método es usado por el frontend para mostrar proyecciones
+   * antes de crear un gasto real
+   */
+  async simulateExpense(userId: string, amount: number, totalInstallments: number, startDate?: Date): Promise<ISimulationResult> {
     try {
       // Obtener el fondo del usuario
-      const fund = await CreditCardFund.findOne({ userId });
+      const fund = await this.fundRepository.getFund(userId);
       
       if (!fund) {
         throw new Error('Credit card fund not found for this user');
       }
       
+      // Crear el objeto de gasto para la simulación
+      const expenseData: ICreditCardExpenseCreate = {
+        userId,
+        amount,
+        totalInstallments,
+        purchaseDate: startDate,
+        description: 'Simulation',
+        isSimulation: true
+      };
+      
+      // Usar el calculador para simular el gasto
+      return await this.expenseCalculator.simulateExpense(fund, expenseData);
+    } catch (error) {
+      console.error('Error simulating expense:', error);
+      throw error;
+    }
+  }
+}
+
+export class ExpenseCalculator implements IExpenseCalculator {
+  async simulateExpense(fund: ICreditCardFund, expense: ICreditCardExpenseCreate): Promise<ISimulationResult> {
+    // Implementación síncrona...
+    try {
       // Obtener todos los gastos activos (no simulaciones)
       const expenses = await CreditCardExpense.find({ 
-        userId, 
+        userId: fund.userId, 
         isSimulation: { $ne: true } 
       });
       
       // Calcular el monto por cuota del nuevo gasto simulado
-      const installmentAmount = amount / totalInstallments;
+      const installmentAmount = expense.amount / expense.totalInstallments;
       
       // Calcular el total de cuotas pendientes existentes
       let pendingAmount = 0;
@@ -291,13 +280,13 @@ export class CreditCardService {
       // Fecha para calcular los meses de las cuotas
       const baseDate = new Date();
       // Usar la fecha de inicio proporcionada o la fecha actual
-      const simulationStartDate = startDate ? new Date(startDate) : new Date(baseDate);
+      const simulationStartDate = expense.purchaseDate ? new Date(expense.purchaseDate) : new Date(baseDate);
       
       console.log(`Fecha de inicio de pago: ${simulationStartDate.toISOString().split('T')[0]}`);
       
       // Crear una lista de los meses para la simulación
       const simulationMonths: string[] = [];
-      for (let i = 0; i < Math.max(12, totalInstallments + 3); i++) {
+      for (let i = 0; i < Math.max(12, expense.totalInstallments + 3); i++) {
         const simulationDate = new Date(baseDate);
         simulationDate.setMonth(simulationDate.getMonth() + i);
         simulationMonths.push(`${simulationDate.getFullYear()}-${simulationDate.getMonth()}`);
@@ -328,7 +317,7 @@ export class CreditCardService {
       const simulationMonthlyPayments: Record<string, number> = {};
       
       // Agregar las cuotas de la simulación al mapa mensual
-      for (let i = 0; i < totalInstallments; i++) {
+      for (let i = 0; i < expense.totalInstallments; i++) {
         // Calcular la fecha de vencimiento para esta cuota
         const installmentDueDate = new Date(simulationStartDate);
         installmentDueDate.setMonth(installmentDueDate.getMonth() + i);
@@ -361,7 +350,7 @@ export class CreditCardService {
       // Verificar si hay gastos (pagados o pendientes) en el mes actual
       // Necesitamos distinguir entre:
       // 1. No tener gastos en absoluto (debe considerar el aporte mensual)
-      // 2. Tener gastos pero todos cancelados (no debe considerar el aporte mensual)
+      // 2. Tener gastos pero todos están pagados (no debe considerar el aporte mensual)
       // 3. Tener gastos pendientes (debe considerar el aporte mensual)
       
       // Verificar si hay pagos pendientes en el mes actual
@@ -537,7 +526,7 @@ export class CreditCardService {
       // Determinar si puede pagar el gasto
       // Para gastos de una sola cuota, solo necesita poder pagar el primer mes
       // Para gastos de múltiples cuotas, necesita poder pagar a largo plazo
-      const canAfford = totalInstallments === 1 ? canPayFirstMonth : canPayTotal;
+      const canAfford = expense.totalInstallments === 1 ? canPayFirstMonth : canPayTotal;
       
       // Calcular el déficit si no puede pagar
       let deficit = 0;
@@ -559,7 +548,7 @@ export class CreditCardService {
           maxReasonableContribution = fund.maxMonthlyContribution;
         } else {
           // Calcular un valor razonable basado en la cuota
-          const installmentAmountReference = amount / totalInstallments;
+          const installmentAmountReference = expense.amount / expense.totalInstallments;
           maxReasonableContribution = Math.max(
             fund.monthlyContribution * 1.5, // 50% más que el aporte actual
             installmentAmountReference * 1.5 // 50% más que el monto de la cuota
@@ -605,11 +594,11 @@ export class CreditCardService {
         availableFunds,
         projectedAvailableFunds: projectedAvailableFundsAtStart, // Usar el valor calculado
         projectedAvailableFundsAtStart,
-        requiredFunds: fundsNeededForExisting + (installmentAmount * totalInstallments),
+        requiredFunds: fundsNeededForExisting + (installmentAmount * expense.totalInstallments),
         monthlyRequiredFunds,
-        totalRequiredFunds: amount,
+        totalRequiredFunds: expense.amount,
         projectedBalance: projectedAvailableFundsAtStart - monthlyRequiredFunds,
-        totalProjectedBalance: projectedAvailableFundsAtStart - amount,
+        totalProjectedBalance: projectedAvailableFundsAtStart - expense.amount,
         pendingAmount,
         pendingInstallments,
         installmentAmount,
@@ -623,16 +612,15 @@ export class CreditCardService {
     }
   }
 
-  // Método auxiliar para generar las cuotas
-  private static generateInstallments(amount: number, totalInstallments: number, startDate: Date): IInstallment[] {
-    const installments: IInstallment[] = [];
-    const installmentAmount = amount / totalInstallments;
+  calculateInstallments(amount: number, installments: number, startDate: Date): IInstallment[] {
+    const installmentAmount = amount / installments;
     
-    for (let i = 0; i < totalInstallments; i++) {
+    const installmentsArray: IInstallment[] = [];
+    for (let i = 0; i < installments; i++) {
       const dueDate = new Date(startDate);
       dueDate.setMonth(dueDate.getMonth() + i);
       
-      installments.push({
+      installmentsArray.push({
         number: i + 1,
         amount: installmentAmount,
         dueDate,
@@ -640,6 +628,6 @@ export class CreditCardService {
       });
     }
     
-    return installments;
+    return installmentsArray;
   }
 }
